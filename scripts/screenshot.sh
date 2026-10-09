@@ -12,9 +12,13 @@ import CoreGraphics
 import Foundation
 let app = CommandLine.arguments[1]
 let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as! [[String: Any]]
-for w in list where (w["kCGWindowOwnerName"] as? String) == app && (w["kCGWindowLayer"] as? Int) == 0 {
-    print(w["kCGWindowNumber"]!); break
+// Largest window owned by the app (any layer, so a pinned/floating window still counts).
+let mine = list.filter { ($0["kCGWindowOwnerName"] as? String) == app }
+let best = mine.max { a, b in
+    func area(_ w: [String: Any]) -> Double { let b = w["kCGWindowBounds"] as! [String: Double]; return b["Width"]! * b["Height"]! }
+    return area(a) < area(b)
 }
+if let best { print(best["kCGWindowNumber"]!) }
 EOF
   swiftc -O -o "$WID" "$TMP/wid.swift" 2>/dev/null
 fi

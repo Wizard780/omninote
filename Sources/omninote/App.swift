@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let settings = SettingsModel()
     let gear = HoverCornerButton(frame: .zero)
     var popover: NSPopover?
+    let updater = Updater()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         try? FileManager.default.createDirectory(at: AppDelegate.themesDir, withIntermediateDirectories: true)
@@ -34,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSAlert(error: error).runModal(); NSApp.terminate(nil); return
         }
         let days = UserDefaults.standard.integer(forKey: "autoDeleteDays")
-        if days > 0 { try? store.deleteUnmodified(before: Date(timeIntervalSinceNow: -Double(days) * 86400)) }
+        if days > 0 { _ = try? store.deleteUnmodified(before: Date(timeIntervalSinceNow: -Double(days) * 86400)) }
 
         editor = EditorController(store: store)
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 480),
@@ -98,7 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let view = SettingsView(model: settings,
                                 openThemesFolder: { [weak self] in self?.openThemesFolder() },
                                 reloadThemes: { [weak self] in self?.loadThemes() },
-                                chooseFont: { [weak self] in self?.showFontPanel() })
+                                chooseFont: { [weak self] in self?.showFontPanel() },
+                                checkUpdates: { [weak self] in self?.checkForUpdates() })
         let p = NSPopover()
         p.behavior = .transient
         p.appearance = NSAppearance(named: settings.palette.isDarkTheme ? .darkAqua : .aqua)
@@ -108,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        updater.checkIfDue(enabled: settings.checkForUpdates)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         window.makeFirstResponder(editor.textView)
@@ -128,6 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "appendToCurrent": editor.append(content)
             case "nextNote": editor.swipe(left: true)
             case "previousNote": editor.swipe(left: false)
+            case "checkForUpdates": checkForUpdates()
             case "settings": DispatchQueue.main.async { [weak self] in self?.showSettings() }  // after the activation below, or the transient popover closes
             default: continue
             }
@@ -167,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(autoItem)
         appMenu.addItem(withTitle: "Open Themes Folder", action: #selector(openThemesFolder), keyEquivalent: "")
         appMenu.addItem(withTitle: "Reload Themes", action: #selector(loadThemes), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(item("Hide omninote", #selector(NSApplication.hide(_:)), "h"))
         appMenu.addItem(item("Quit omninote", #selector(NSApplication.terminate(_:)), "q"))
@@ -245,6 +250,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func togglePin() { settings.pinOnTop.toggle() }
+
+    @objc func checkForUpdates() {
+        settings.updateStatus = "checking…"
+        updater.check(manual: true) { [weak self] in self?.settings.updateStatus = $0 }
+    }
     @objc func openThemesFolder() { NSWorkspace.shared.open(AppDelegate.themesDir) }
 
     @objc func about() {

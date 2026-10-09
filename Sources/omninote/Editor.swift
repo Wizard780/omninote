@@ -53,7 +53,8 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         swipeView.minSize = .zero
         swipeView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         super.init()
-        swipeView.onSwipe = { [weak self] left in self?.swipe(left: left) }
+        swipeView.onDrag = { [weak self] dx in self?.dragChanged(dx) }
+        swipeView.onDragEnd = { [weak self] dx in self?.dragEnded(dx) }
 
         textView.delegate = self
         textView.isRichText = true
@@ -197,6 +198,38 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         justNavigated = true
     }
 
+    // MARK: finger-tracked swipe
+
+    private var atOldestEdge: Bool { index >= notes.count - 1 }
+
+    /// Move the content with the fingers; resist past the oldest note (there is nothing older to show).
+    func dragChanged(_ dx: CGFloat) {
+        guard let layer = scrollView.layer, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let rubber = dx > 0 && atOldestEdge
+        let offset = rubber ? dx / 4 : dx
+        layer.removeAllAnimations()
+        layer.transform = CATransform3DMakeTranslation(offset, 0, 0)
+        scrollView.alphaValue = rubber ? 1 : max(0.35, 1 - abs(offset) / 260)
+    }
+
+    func dragEnded(_ dx: CGFloat) {
+        let far = abs(dx) >= 70
+        if far, !(dx > 0 && atOldestEdge) { swipe(left: dx < 0); return }
+        if far { showPill("Oldest note") }
+        if let layer = scrollView.layer { spring(layer, to: CATransform3DIdentity) }
+        NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0.2; self.scrollView.animator().alphaValue = 1 }
+    }
+
+    private func spring(_ layer: CALayer, to transform: CATransform3D) {
+        let a = CASpringAnimation(keyPath: "transform")
+        a.fromValue = NSValue(caTransform3D: layer.presentation()?.transform ?? layer.transform)
+        a.toValue = NSValue(caTransform3D: transform)
+        a.damping = 22; a.stiffness = 280; a.mass = 1
+        a.duration = a.settlingDuration
+        layer.transform = transform
+        layer.add(a, forKey: "spring")
+    }
+
     func showPill(_ message: String) {
         pillLabel.stringValue = message
         pillLabel.textColor = NSColor(hex: theme.background)
@@ -213,23 +246,22 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
     /// Slide the old note out and the new one in. direction: +1 = towards newer (content moves left), -1 = older, 0 = none.
     private func animateSwap(direction: CGFloat, _ swap: @escaping () -> Void) {
         guard direction != 0, let layer = scrollView.layer, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { swap(); return }
-        let dx = 36 * direction
+        // Continue from wherever the fingers left the content, then spring the new note in from the other side.
+        let start = (layer.presentation() ?? layer).transform.m41
+        let exit = -direction * max(48, abs(start) + 40)
+        layer.removeAllAnimations()
+        layer.transform = CATransform3DMakeTranslation(start, 0, 0)
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.11
+            ctx.duration = 0.1
             ctx.allowsImplicitAnimation = true
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
             self.scrollView.alphaValue = 0
-            layer.transform = CATransform3DMakeTranslation(-dx, 0, 0)
+            layer.transform = CATransform3DMakeTranslation(exit, 0, 0)
         }, completionHandler: {
             swap()
-            layer.transform = CATransform3DMakeTranslation(dx, 0, 0)
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.22
-                ctx.allowsImplicitAnimation = true
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                self.scrollView.alphaValue = 1
-                layer.transform = CATransform3DIdentity
-            }
+            layer.transform = CATransform3DMakeTranslation(40 * direction, 0, 0)
+            self.spring(layer, to: CATransform3DIdentity)
+            NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0.18; self.scrollView.animator().alphaValue = 1 }
         })
     }
 
@@ -259,7 +291,15 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
     }
 
     // Plain text only: pasted rich text would carry foreign fonts and colors.
-    func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool { true }
+    private var pendingEdit: NSRange?   // the user's last edit, in post-edit coordinates, so refresh can restyle only its paragraph
+    private var lastKeyword: Keyword?
+    private var lastStatus: String?
+    private var lastTitle: String?
+
+    func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
+        if !processing { pendingEdit = NSRange(location: range.location, length: (replacementString ?? "").utf16.count) }
+        return true
+    }
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
         guard let url = link as? URL else { return false }
@@ -283,23 +323,38 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
                 .replacingOccurrences(of: "[\r\u{2028}\u{2029}\u{85}]", with: "\n", options: .regularExpression))
         }
         let processed = Keywords.process(textView.string)
+        var dirtyRange = pendingEdit
+        pendingEdit = nil
         if processed.text != textView.string {
-            replaceText(with: processed.text)
+            let (rewritten, delta) = replaceText(with: processed.text)
+            if var d = dirtyRange {
+                if rewritten.location < d.location { d.location = max(0, d.location + delta) }
+                dirtyRange = NSUnionRange(d, rewritten)
+            } else { dirtyRange = rewritten }
             dirty = true
             saveTimer?.invalidate()
             saveTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in self?.flush() }
         }
-        style()
         let (keyword, argument, title) = Keywords.detect(textView.string)
+        // Restyle just the touched paragraphs; the whole note only when the keyword line changed.
+        if keyword != lastKeyword || dirtyRange == nil { style() } else { style(in: dirtyRange) }
+        lastKeyword = keyword
         // A running timer keeps going while you browse other notes; it stops only when its own note drops the keyword.
         if keyword == .timer { updateTimer(argument: argument, title: title) } else if current?.id == timerNoteId { stopTimer() }
+        lastStatus = processed.status; lastTitle = title
+        updateStatus()
+    }
+
+    private func updateStatus() {
         let position = "\(index + 1)/\(notes.count)"
-        let parts = [timerStatus ?? processed.status, title.map { "“\($0)”" }, position].compactMap { $0 }
+        let parts = [timerStatus ?? lastStatus, lastTitle.map { "“\($0)”" }, position].compactMap { $0 }
         statusLabel.stringValue = parts.joined(separator: "  ·  ")
     }
 
-    // Replace only the differing middle so the caret and undo stack survive.
-    private func replaceText(with new: String) {
+    // Replace only the differing middle so the caret and undo stack survive. Returns the replaced range (new coordinates)
+    // and how much text after it shifted.
+    @discardableResult
+    private func replaceText(with new: String) -> (NSRange, Int) {
         let old = textView.string
         let oldU = Array(old.utf16), newU = Array(new.utf16)
         var prefix = 0
@@ -320,12 +375,15 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         if caret >= range.location, caret <= range.location + range.length, replacement.hasPrefix(" ") || old.utf16.count == caret {
             textView.setSelectedRange(NSRange(location: range.location + replacement.utf16.count, length: 0))
         }
+        return (NSRange(location: range.location, length: replacement.utf16.count), replacement.utf16.count - range.length)
     }
 
-    private func style() {
+    /// Apply colors and fonts. With a range, only the paragraphs containing it are touched (what every keystroke needs).
+    private func style(in range: NSRange? = nil) {
         guard let storage = textView.textStorage else { return }
         let text = textView.string as NSString
-        let full = NSRange(location: 0, length: text.length)
+        let whole = NSRange(location: 0, length: text.length)
+        let full = range.map { text.paragraphRange(for: NSIntersectionRange($0, whole)) } ?? whole
         let (keyword, _, _) = Keywords.detect(textView.string)
         let base = baseFont(size: fontSize, bold: false)
         let main = NSColor(hex: theme.typeMain), light = NSColor(hex: theme.typeLight), subtle = NSColor(hex: theme.typeSubtle)
@@ -333,7 +391,7 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
 
         storage.beginEditing()
         storage.setAttributes([.font: base, .foregroundColor: main], range: full)
-        var lineNo = 0
+        var lineNo = full.location == 0 ? 0 : text.substring(to: full.location).components(separatedBy: "\n").count - 1
         text.enumerateSubstrings(in: full, options: [.byLines, .substringNotRequired]) { _, lineRange, _, _ in
             defer { lineNo += 1 }
             let line = text.substring(with: lineRange)
@@ -499,7 +557,7 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
 
     // Alert whenever the timer enters a new phase: countdown done, or a pomodoro work/break switch.
     private func tick() {
-        refresh()
+        updateStatus()
         guard let spec = timerSpec else { return }
         let phase = Keywords.timerPhase(spec, elapsed: timerElapsed)
         defer { lastPhase = phase }

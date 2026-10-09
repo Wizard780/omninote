@@ -139,6 +139,13 @@ expect(Keywords.timerPhase(pomo, elapsed: 1800), "1-work")
 expect(Keywords.clock(210), "3:30")
 expect(Keywords.clock(3661), "1:01:01")
 
+// MARK: Version
+expect(Version.isNewer("v0.3.0", than: "0.2.0"), true)
+expect(Version.isNewer("0.10.0", than: "0.9.9"), true)
+expect(Version.isNewer("v0.2.0", than: "0.2.0"), false)
+expect(Version.isNewer("0.2", than: "0.2.1"), false)
+expect(Version.isNewer("1.0.0-beta", than: "0.9"), true)
+
 // MARK: Store
 do {
     let path = NSTemporaryDirectory() + "omninote-test-\(UUID().uuidString).sqlite3"

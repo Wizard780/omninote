@@ -33,8 +33,9 @@ Type one of these on the first line of a note (add `: Title` after it to name th
 | `timer` | `timer` stopwatch · `timer 3.5` or `timer 3:30` countdown · `timer 5 1` pomodoro · `timer pomo` 25/5 · `timer p` pause · `timer r` restart · `timer s` stop. Plays a sound and brings the window forward when done. |
 | `code` | Monospace, no link detection. |
 
-Navigate with a two-finger swipe left or right (swiping past the newest note starts a new one; swiping
-away from an empty note deletes it), or with the keyboard. After navigating, ↑/← puts the caret at the
+Navigate with a two-finger swipe left or right: the note follows your fingers, springs back if you let go
+early, and slides through if you go far enough. Swiping past the newest note starts a new one, swiping
+away from an empty note deletes it, and the oldest note rubber-bands. Keyboard works too. After navigating, ↑/← puts the caret at the
 end of the note and ↓/→ at the start.
 
 Shortcuts: ⌘N new · ⌘D delete · ⌘[ / ⌘] older / newer · ⌘1 front · ⌘⇧1 promote to front · ⌘F search ·
@@ -43,6 +44,10 @@ menu-bar icon).
 
 Notes auto-save and live in `~/Library/Application Support/omninote/notes.sqlite3`, the same `notes`
 table shape Antinote 1.x uses. Auto-delete of untouched notes (off by default) is in the app menu.
+
+**Updates:** once a day omninote asks GitHub Releases whether a newer version exists and, if so, offers to
+download the DMG to ~/Downloads and open it. That is the app's only network call; turn it off in Settings
+or check manually from the omninote menu.
 
 **Settings:** hover the top-right corner of the window and click the gear (or open `omninote://settings`).
 Theme, font, text size, menu-bar icon, Dock icon, keep-on-top, and auto-delete all live there. With both
@@ -63,6 +68,7 @@ omninote://appendToCurrent?content=more
 omninote://nextNote
 omninote://previousNote
 omninote://settings
+omninote://checkForUpdates
 ```
 
 ## Not implemented (on purpose, for now)

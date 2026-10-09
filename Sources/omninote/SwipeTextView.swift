@@ -1,29 +1,35 @@
 import AppKit
 
-/// NSTextView that turns a horizontal two-finger trackpad swipe into one navigation step per gesture.
-/// Vertical scrolling is passed through untouched.
+/// NSTextView that reports a horizontal two-finger trackpad gesture as it happens, so the editor can move the
+/// content with the finger. Vertical scrolling is passed through untouched; momentum tails are ignored.
 final class SwipeTextView: NSTextView {
-    var onSwipe: ((_ left: Bool) -> Void)?
+    var onDrag: ((_ offset: CGFloat) -> Void)?       // cumulative horizontal offset while the fingers are down
+    var onDragEnd: ((_ offset: CGFloat) -> Void)?    // final offset when they lift
     private var accumulated: CGFloat = 0
-    private var fired = false
-    private let threshold: CGFloat = 80
+    private var axis: Axis = .undecided
+
+    private enum Axis { case undecided, horizontal, vertical }
 
     override func scrollWheel(with event: NSEvent) {
-        guard event.momentumPhase == [] else { super.scrollWheel(with: event); return }  // a flick's tail is never a second swipe
-        let horizontal = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+        guard event.momentumPhase == [] else { super.scrollWheel(with: event); return }
         switch event.phase {
-        case .began: accumulated = 0; fired = false
-        case .changed where horizontal && !fired:
-            accumulated += event.scrollingDeltaX
-            if abs(accumulated) >= threshold {
-                fired = true
-                onSwipe?(accumulated < 0)  // finger moving left (negative deltaX) = "swipe left" = newer note
+        case .began:
+            accumulated = 0; axis = .undecided
+        case .changed:
+            if axis == .undecided {
+                let dx = abs(event.scrollingDeltaX), dy = abs(event.scrollingDeltaY)
+                if dx + dy > 6 { axis = dx > dy ? .horizontal : .vertical }  // lock the axis once the intent is clear
             }
-            return
-        case .ended, .cancelled: accumulated = 0
+            if axis == .horizontal {
+                accumulated += event.scrollingDeltaX
+                onDrag?(accumulated)
+                return
+            }
+        case .ended, .cancelled:
+            if axis == .horizontal { onDragEnd?(accumulated); accumulated = 0; axis = .undecided; return }
+            axis = .undecided
         default: break
         }
-        if horizontal && event.phase != [] { return }  // swallow the rest of a horizontal gesture
         super.scrollWheel(with: event)
     }
 }

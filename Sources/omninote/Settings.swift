@@ -17,6 +17,8 @@ final class SettingsModel: ObservableObject {
     @Published var showInDock: Bool { didSet { defaults.set(showInDock, forKey: "showInDock"); onChange?() } }
     @Published var pinOnTop: Bool { didSet { defaults.set(pinOnTop, forKey: "pinOnTop"); onChange?() } }
     @Published var autoDeleteDays: Int { didSet { defaults.set(autoDeleteDays, forKey: "autoDeleteDays"); onChange?() } }
+    @Published var checkForUpdates: Bool { didSet { defaults.set(checkForUpdates, forKey: "checkForUpdates"); onChange?() } }
+    @Published var updateStatus = ""
     @Published var palette: Theme = .default  // the applied theme, so the panel is drawn like the editor
 
     init() {
@@ -27,6 +29,7 @@ final class SettingsModel: ObservableObject {
         showInDock = defaults.object(forKey: "showInDock") as? Bool ?? true
         pinOnTop = defaults.bool(forKey: "pinOnTop")
         autoDeleteDays = defaults.integer(forKey: "autoDeleteDays")
+        checkForUpdates = defaults.object(forKey: "checkForUpdates") as? Bool ?? true
         if !fontNames.contains(fontFamily) { fontNames.append(fontFamily) }
     }
 }
@@ -44,6 +47,7 @@ struct SettingsView: View {
     var openThemesFolder: () -> Void
     var reloadThemes: () -> Void
     var chooseFont: () -> Void
+    var checkUpdates: () -> Void
 
     private var bg: Color { Color(hex: model.palette.background) }
     private var fg: Color { Color(hex: model.palette.typeMain) }
@@ -85,7 +89,7 @@ struct SettingsView: View {
             row("show in dock") { Toggle("", isOn: $model.showInDock) }
             row("keep window on top") { Toggle("", isOn: $model.pinOnTop) }
             if !model.showInMenuBar && !model.showInDock {
-                Text("// with both off, ⌥A is the only way back in").foregroundStyle(dim).padding(.vertical, 6)
+                Text("// both off: ⌥A is the only way back in").foregroundStyle(dim).padding(.vertical, 6)
             }
 
             section("notes")
@@ -94,7 +98,14 @@ struct SettingsView: View {
                     Text("never").tag(0); Text("1 day").tag(1); Text("1 week").tag(7); Text("1 month").tag(30); Text("1 year").tag(365)
                 }
             }
-            Text("// ⌥A shows or hides · ⌘[ ⌘] move between notes").foregroundStyle(dim).padding(.top, 10)
+            section("updates")
+            row("check daily (github releases)") { Toggle("", isOn: $model.checkForUpdates) }
+            HStack(spacing: 10) {
+                small("check now", action: checkUpdates)
+                Text(model.updateStatus).foregroundStyle(dim).lineLimit(1)
+            }
+            .padding(.vertical, 8)
+            Text("// ⌥A shows or hides · ⌘[ ⌘] move between notes").foregroundStyle(dim).padding(.top, 4)
         }
         .font(font)
         .foregroundStyle(fg)
