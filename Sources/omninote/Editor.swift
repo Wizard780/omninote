@@ -16,7 +16,8 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
     let searchField = NSSearchField()
     let statusLabel = NSTextField(labelWithString: "")
     let stack = NSStackView()
-    let pill = NSTextField(labelWithString: "")
+    let pill = NSView()
+    private let pillLabel = NSTextField(labelWithString: "")
     private var pillTimer: Timer?
     private var justNavigated = false
     var fontFamily: String = UserDefaults.standard.string(forKey: "fontFamily") ?? "SF Mono" { didSet { UserDefaults.standard.set(fontFamily, forKey: "fontFamily"); style() } }
@@ -94,17 +95,23 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
             scrollView.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         pill.wantsLayer = true
-        pill.layer?.cornerRadius = 13
-        pill.alignment = .center
-        pill.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        pill.layer?.cornerRadius = 14
         pill.isHidden = true
+        pill.alphaValue = 0
         pill.translatesAutoresizingMaskIntoConstraints = false
+        pillLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        pillLabel.translatesAutoresizingMaskIntoConstraints = false
+        pill.addSubview(pillLabel)
         stack.addSubview(pill)
         NSLayoutConstraint.activate([
             pill.centerXAnchor.constraint(equalTo: stack.centerXAnchor),
             pill.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -12),
-            pill.heightAnchor.constraint(equalToConstant: 26),
+            pill.heightAnchor.constraint(equalToConstant: 28),
+            pillLabel.centerXAnchor.constraint(equalTo: pill.centerXAnchor),
+            pillLabel.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+            pill.widthAnchor.constraint(equalTo: pillLabel.widthAnchor, constant: 28),
         ])
+        scrollView.wantsLayer = true
 
         reload()
         apply(theme: theme)
@@ -123,24 +130,26 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         show(index)
     }
 
-    func show(_ i: Int) {
+    func show(_ i: Int, direction: CGFloat = 0) {
         flush()
         guard !notes.isEmpty else { statusLabel.stringValue = "Could not create a note (is the disk writable?)"; return }
         index = max(0, min(i, notes.count - 1))
-        processing = true
-        textView.string = notes[index].content
-        textView.undoManager?.removeAllActions()
-        processing = false
-        refresh()
-        textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
-        textView.window?.makeFirstResponder(textView)
+        animateSwap(direction: direction) { [self] in
+            processing = true
+            textView.string = notes[index].content
+            textView.undoManager?.removeAllActions()
+            processing = false
+            refresh()
+            textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
+            textView.window?.makeFirstResponder(textView)
+        }
     }
 
-    func newNote(content: String = "") {
+    func newNote(content: String = "", direction: CGFloat = 0) {
         flush()
         guard let n = try? store.create(content: content) else { return }
         notes.insert(n, at: 0)
-        show(0)
+        show(0, direction: direction)
     }
 
     func deleteCurrent() {
@@ -177,22 +186,49 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         if let n = current, n.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, notes.count > 1 {
             deleteCurrent()
             showPill("Empty note deleted")
-            if left { show(max(0, index - 1)) }  // deleteCurrent reloads at the same index (the older neighbour)
+            if left { show(max(0, index - 1), direction: 1) }  // deleteCurrent reloads at the same index (the older neighbour)
             return
         }
-        if target < 0 { newNote(); return }
+        if target < 0 { newNote(direction: 1); return }
         guard target < notes.count else { showPill("Oldest note"); return }
-        show(target)
+        show(target, direction: left ? 1 : -1)
         justNavigated = true
     }
 
     func showPill(_ message: String) {
-        pill.stringValue = "  \(message)  "
-        pill.textColor = NSColor(hex: theme.background)
-        pill.layer?.backgroundColor = NSColor(hex: theme.typeMain).withAlphaComponent(0.85).cgColor
+        pillLabel.stringValue = message
+        pillLabel.textColor = NSColor(hex: theme.background)
+        pill.layer?.backgroundColor = NSColor(hex: theme.typeMain).withAlphaComponent(0.9).cgColor
         pill.isHidden = false
+        NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0.15; self.pill.animator().alphaValue = 1 }
         pillTimer?.invalidate()
-        pillTimer = Timer.scheduledTimer(withTimeInterval: 1.8, repeats: false) { [weak self] _ in self?.pill.isHidden = true }
+        pillTimer = Timer.scheduledTimer(withTimeInterval: 1.6, repeats: false) { [weak self] _ in
+            NSAnimationContext.runAnimationGroup({ ctx in ctx.duration = 0.25; self?.pill.animator().alphaValue = 0 },
+                                                completionHandler: { self?.pill.isHidden = true })
+        }
+    }
+
+    /// Slide the old note out and the new one in. direction: +1 = towards newer (content moves left), -1 = older, 0 = none.
+    private func animateSwap(direction: CGFloat, _ swap: @escaping () -> Void) {
+        guard direction != 0, let layer = scrollView.layer, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { swap(); return }
+        let dx = 36 * direction
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.11
+            ctx.allowsImplicitAnimation = true
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            self.scrollView.alphaValue = 0
+            layer.transform = CATransform3DMakeTranslation(-dx, 0, 0)
+        }, completionHandler: {
+            swap()
+            layer.transform = CATransform3DMakeTranslation(dx, 0, 0)
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.22
+                ctx.allowsImplicitAnimation = true
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                self.scrollView.alphaValue = 1
+                layer.transform = CATransform3DIdentity
+            }
+        })
     }
 
     // MARK: editing

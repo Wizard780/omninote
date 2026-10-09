@@ -53,6 +53,8 @@ are bundled.
 ```
 omninote://createNote?content=hello%20world
 omninote://appendToCurrent?content=more
+omninote://nextNote
+omninote://previousNote
 ```
 
 ## Not implemented (on purpose, for now)

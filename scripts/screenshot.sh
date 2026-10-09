@@ -3,8 +3,10 @@
 # usage: scripts/screenshot.sh <AppName> <out.png>
 set -e
 APP="${1:-omninote}"; OUT="${2:-/tmp/$APP.png}"
-TMP=$(mktemp -d)
-cat > "$TMP/wid.swift" <<'EOF'
+WID=/tmp/omninote-wid
+if [ ! -x "$WID" ]; then
+  TMP=$(mktemp -d)
+  cat > "$TMP/wid.swift" <<'EOF'
 import CoreGraphics
 import Foundation
 let app = CommandLine.arguments[1]
@@ -13,8 +15,9 @@ for w in list where (w["kCGWindowOwnerName"] as? String) == app && (w["kCGWindow
     print(w["kCGWindowNumber"]!); break
 }
 EOF
-swiftc -O -o "$TMP/wid" "$TMP/wid.swift" 2>/dev/null
-ID=$("$TMP/wid" "$APP")
+  swiftc -O -o "$WID" "$TMP/wid.swift" 2>/dev/null
+fi
+ID=$("$WID" "$APP")
 [ -n "$ID" ] || { echo "no window for $APP" >&2; exit 1; }
 screencapture -x -o -l "$ID" "$OUT"
 echo "$OUT"

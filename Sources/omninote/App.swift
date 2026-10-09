@@ -73,6 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch url.host ?? url.lastPathComponent {
             case "createNote": editor.newNote(content: content)
             case "appendToCurrent": editor.append(content)
+            case "nextNote": editor.swipe(left: true)
+            case "previousNote": editor.swipe(left: false)
             default: continue
             }
             window.makeKeyAndOrderFront(nil)
@@ -163,8 +165,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func newNote() { editor.newNote() }
     @objc func deleteNote() { editor.deleteCurrent() }
-    @objc func previousNote() { editor.show(editor.index + 1) }   // older notes have higher indices
-    @objc func nextNote() { editor.show(editor.index - 1) }
+    @objc func previousNote() { editor.show(editor.index + 1, direction: -1) }   // older notes have higher indices
+    @objc func nextNote() { editor.show(editor.index - 1, direction: 1) }
     @objc func jumpToFront() { editor.show(0) }
     @objc func promote() { editor.promoteCurrent() }
     @objc func find() { editor.openSearch() }
