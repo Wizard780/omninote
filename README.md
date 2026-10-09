@@ -9,9 +9,14 @@ calculator, a checklist, or a timer. Built from the reverse-engineering notes in
 Requires macOS 14+ and the Xcode Command Line Tools (no Xcode needed).
 
 ```sh
-make test   # core library self-checks
-make run    # builds dist/omninote.app and opens it
+make test     # core library self-checks
+make run      # builds dist/omninote.app and opens it
+make install  # copies the app to /Applications
+make dmg      # writes dist/omninote.dmg (drag-to-Applications image)
 ```
+
+The app is ad-hoc signed, not notarized. On first launch from a DMG, right-click > Open if Gatekeeper
+complains.
 
 `Package.swift` is included for SwiftPM users, but on machines with only Command Line Tools its manifest
 fails to link, so the Makefile is the supported path.

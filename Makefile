@@ -6,7 +6,7 @@ TESTS := $(wildcard Tests/OmninoteCoreTests/*.swift)
 BUILD := build
 BUNDLE := dist/omninote.app
 
-.PHONY: all test app run clean
+.PHONY: all test app run dmg install clean
 
 all: $(BUILD)/omninote
 
@@ -34,6 +34,21 @@ app: $(BUILD)/omninote
 
 run: app
 	open $(BUNDLE)
+
+dist/omninote.dmg: app
+	rm -rf $(BUILD)/dmg $@
+	mkdir -p $(BUILD)/dmg
+	cp -R $(BUNDLE) $(BUILD)/dmg/
+	ln -s /Applications $(BUILD)/dmg/Applications
+	hdiutil create -quiet -volname omninote -srcfolder $(BUILD)/dmg -ov -format UDZO $@
+	@echo "wrote $@"
+
+dmg: dist/omninote.dmg
+
+install: app
+	rm -rf /Applications/omninote.app
+	cp -R $(BUNDLE) /Applications/omninote.app
+	@echo "installed /Applications/omninote.app"
 
 clean:
 	rm -rf $(BUILD) dist .build
