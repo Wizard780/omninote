@@ -10,9 +10,12 @@ BUNDLE := dist/omninote.app
 
 all: $(BUILD)/omninote
 
-$(BUILD)/omninote: $(CORE) $(APP)
+$(BUILD)/libOmninoteCore.a: $(CORE)
 	@mkdir -p $(BUILD)
-	swiftc -O -parse-as-library -module-name omninote -framework AppKit -framework Carbon $(CORE) $(APP) -o $@
+	swiftc -O -emit-library -static -emit-module -module-name OmninoteCore -emit-module-path $(BUILD)/OmninoteCore.swiftmodule $(CORE) -o $@
+
+$(BUILD)/omninote: $(BUILD)/libOmninoteCore.a $(APP)
+	swiftc -O -parse-as-library -module-name omninote -I $(BUILD) -L $(BUILD) -lOmninoteCore -lsqlite3 -framework AppKit -framework Carbon $(APP) -o $@
 
 $(BUILD)/tests: $(CORE) $(TESTS)
 	@mkdir -p $(BUILD)

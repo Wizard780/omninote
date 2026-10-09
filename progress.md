@@ -20,3 +20,8 @@ Build "omninote", an open alternative to Antinote (see ANTINOTE_RE.md), as a nat
 - Subagent review of the code, findings fixed.
 
 ## Log
+- 2026-10-08 Stage 1 done: OmninoteCore + 77 assert checks (`make test` OK). SwiftPM manifest fails to link on this CLT install, so builds use the Makefile (swiftc).
+- 2026-10-08 Stage 2+3 done: AppKit app (editor, menus, search, timer, themes, hotkey, status item, auto-delete, export, URL scheme). Verified: launched dist/omninote.app, created math/list/timer notes via omninote://createNote, screenshots /tmp/omninote-{math,list,timer,dracula}.png, rows present in notes.sqlite3. Fixed: results not saved on load; theme pref overwritten on init; checkbox link styling.
+- Not verified: ⌥A global hotkey and checkbox click (synthetic input needs Accessibility access, which is denied here). Timer restarts on relaunch (state not persisted; skipped).
+## Next
+- Subagent code review, fix findings, commit.
