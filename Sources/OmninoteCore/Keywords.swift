@@ -119,6 +119,8 @@ public enum Keywords {
 
     public static let unchecked = "[ ] "
     public static let checked = "[x] "
+    // Complete marker anywhere ("[ ] milk", "[x]done"), or a half-typed one only when it is all there is ("[", "[x").
+    private static let markerRegex = try! NSRegularExpression(pattern: #"^\[[ xX]?\]\s*|^\[[ xX]?$"#)
 
     /// Every non-empty body line becomes a checkbox item; a trailing "/x" toggles the item and is consumed.
     public static func processList(_ text: String) -> Processed {
@@ -132,8 +134,12 @@ public enum Keywords {
             var body = String(line.dropFirst(indent.count))
             if body.hasPrefix("- ") { body.removeFirst(2) }
             var isChecked = false
-            if body.hasPrefix(checked) || body.lowercased().hasPrefix("[x] ") { isChecked = true; body.removeFirst(checked.count) }
-            else if body.hasPrefix(unchecked) { body.removeFirst(unchecked.count) }
+            // A complete or half-typed marker ("[", "[ ", "[]", "[x", "[x] ") is the checkbox, never item text.
+            if let m = markerRegex.firstMatch(in: body, range: NSRange(location: 0, length: body.utf16.count)) {
+                let marker = (body as NSString).substring(with: m.range)
+                isChecked = marker.lowercased().contains("x")
+                body = (body as NSString).substring(from: m.range.length)
+            }
             if body.hasSuffix("/x"), !body.contains("://") { body.removeLast(2); isChecked.toggle() }  // not a URL path
             line = indent + (isChecked ? checked : unchecked) + body
             lines[i] = line
