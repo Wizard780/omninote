@@ -63,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil); return true
     }
 
-    func applicationWillTerminate(_ notification: Notification) { editor.flush() }
+    func applicationWillTerminate(_ notification: Notification) { editor?.flush() }
 
     // omninote://createNote?content=…  omninote://appendToCurrent?content=…
     func application(_ application: NSApplication, open urls: [URL]) {

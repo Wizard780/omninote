@@ -11,7 +11,8 @@ public struct Processed: Equatable {
 }
 
 public enum Keywords {
-    private static let numberRegex = try! NSRegularExpression(pattern: #"(?<![\p{L}\p{N}])-?\d+(?:[.,]\d+)*(?![\p{L}])"#)
+    // Possessive quantifiers so "250g" is skipped rather than backtracked into "25".
+    private static let numberRegex = try! NSRegularExpression(pattern: #"(?<![\p{L}\p{N}])-?\d++(?:[.,]\d++)*+(?![\p{L}])"#)
 
     /// First-line detection: "math", "list: Title", "timer 5 1: Laundry".
     public static func detect(_ text: String) -> (keyword: Keyword?, argument: String, title: String?) {
@@ -19,6 +20,8 @@ public enum Keywords {
         let (head, title) = splitTitle(first)
         let words = head.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
         guard let w = words.first, let k = Keyword(rawValue: w.lowercased()) else { return (nil, "", nil) }
+        // Only "timer" takes arguments; "List of things" or "Count the days" must stay plain notes.
+        guard words.count == 1 || k == .timer else { return (nil, "", nil) }
         return (k, words.count > 1 ? String(words[1]).trimmingCharacters(in: .whitespaces) : "", title)
     }
 
@@ -131,7 +134,7 @@ public enum Keywords {
             var isChecked = false
             if body.hasPrefix(checked) || body.lowercased().hasPrefix("[x] ") { isChecked = true; body.removeFirst(checked.count) }
             else if body.hasPrefix(unchecked) { body.removeFirst(unchecked.count) }
-            if body.hasSuffix("/x") { body.removeLast(2); isChecked.toggle() }
+            if body.hasSuffix("/x"), !body.contains("://") { body.removeLast(2); isChecked.toggle() }  // not a URL path
             line = indent + (isChecked ? checked : unchecked) + body
             lines[i] = line
             total += 1
@@ -173,21 +176,27 @@ public enum Keywords {
         }
         let parts = arg.split(separator: " ").map(String.init)
         guard let first = minutes(parts[0]) else { return nil }
-        if parts.count == 2, let second = minutes(parts[1]) { return .pomodoro(work: first, rest: second) }
+        if parts.count == 2, let second = minutes(parts[1]), first + second > 0 { return .pomodoro(work: first, rest: second) }
         return parts.count == 1 && first > 0 ? .countdown(seconds: first) : nil
     }
 
+    private static let maxSeconds = 100 * 86400.0  // Double("inf") and "1e30" parse; keep timers finite and Int-safe
+
     // "3.5" minutes, or "3:30" min:sec. Returns seconds.
     private static func minutes(_ s: String) -> Double? {
+        let seconds: Double?
         if let colon = s.firstIndex(of: ":") {
             guard let m = Double(s[..<colon]), let sec = Double(s[s.index(after: colon)...]) else { return nil }
-            return m * 60 + sec
+            seconds = m * 60 + sec
+        } else {
+            seconds = Double(s).map { $0 * 60 }
         }
-        return Double(s).map { $0 * 60 }
+        guard let v = seconds, v.isFinite, v >= 0, v <= maxSeconds else { return nil }
+        return v
     }
 
     public static func clock(_ seconds: Double) -> String {
-        let s = max(0, Int(seconds.rounded()))
+        let s = seconds.isFinite ? max(0, Int(min(seconds, maxSeconds).rounded())) : 0
         return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
     }
 }

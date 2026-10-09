@@ -80,7 +80,9 @@ public final class Store {
     public func all() throws -> [Note] { try notes() }
 
     public func search(_ term: String) throws -> [Note] {
-        try notes(where: "WHERE content LIKE ? ESCAPE '\\'", ["%" + term.replacingOccurrences(of: "%", with: "\\%") + "%"])
+        var escaped = term
+        for c in ["\\", "%", "_"] { escaped = escaped.replacingOccurrences(of: c, with: "\\" + c) }
+        return try notes(where: "WHERE content LIKE ? ESCAPE '\\'", ["%" + escaped + "%"])
     }
 
     private func nextIndex() throws -> Int {

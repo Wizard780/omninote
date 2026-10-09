@@ -32,7 +32,8 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
     private var timerElapsedBeforePause: TimeInterval = 0
     private var timerPaused = false
     private var timerTick: Timer?
-    private var timerFired = false
+    private var timerCommandDebounce: Timer?
+    private var lastPhase: String?
 
     init(store: Store) {
         self.store = store
@@ -99,6 +100,7 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
 
     func show(_ i: Int) {
         flush()
+        guard !notes.isEmpty else { statusLabel.stringValue = "Could not create a note (is the disk writable?)"; return }
         index = max(0, min(i, notes.count - 1))
         processing = true
         textView.string = notes[index].content
@@ -131,7 +133,7 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
     }
 
     func append(_ text: String) {
-        textView.string += (textView.string.isEmpty || textView.string.hasSuffix("\n") ? "" : "\n") + text
+        replaceText(with: textView.string + (textView.string.isEmpty || textView.string.hasSuffix("\n") ? "" : "\n") + text)
         textDidChange(Notification(name: NSText.didChangeNotification))
     }
 
@@ -171,6 +173,8 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
             flush()
             return true
         }
+        // Note text can arrive from untrusted omninote:// URLs, so never launch file:// or app schemes from a click.
+        guard ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") else { return false }
         NSWorkspace.shared.open(url)
         return true
     }
@@ -204,7 +208,11 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         let replacement = String(utf16CodeUnits: Array(newU[prefix..<(newU.count - suffix)]), count: newU.count - prefix - suffix)
         let caret = textView.selectedRange().location
         processing = true
-        textView.textStorage?.replaceCharacters(in: range, with: replacement)
+        // Going through shouldChangeText/didChangeText registers the edit with the undo manager.
+        if textView.shouldChangeText(in: range, replacementString: replacement) {
+            textView.textStorage?.replaceCharacters(in: range, with: replacement)
+            textView.didChangeText()
+        }
         processing = false
         // Results are appended after the caret ("1+1 =|" → "1+1 = 2"); jump past them so Return starts a new line.
         if caret >= range.location, caret <= range.location + range.length, replacement.hasPrefix(" ") || old.utf16.count == caret {
@@ -336,8 +344,15 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         }
     }
 
+    // Debounced, so typing "pause" letter by letter does not fire "p" and then "pause" (which would undo itself).
     private func updateTimer(argument: String, title: String?) {
         let line = argument.lowercased().trimmingCharacters(in: .whitespaces)
+        guard line != timerLine else { return }
+        timerCommandDebounce?.invalidate()
+        timerCommandDebounce = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: false) { [weak self] _ in self?.applyTimerLine(line) }
+    }
+
+    private func applyTimerLine(_ line: String) {
         guard line != timerLine else { return }
         timerLine = line
         switch Keywords.parseTimer(line) {
@@ -345,38 +360,32 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
             guard timerSpec != nil else { return }
             if timerPaused { timerStart = Date() } else { timerElapsedBeforePause += Date().timeIntervalSince(timerStart) }
             timerPaused.toggle()
-        case .restart?: timerStart = Date(); timerElapsedBeforePause = 0; timerPaused = false; timerFired = false
+        case .restart?: timerStart = Date(); timerElapsedBeforePause = 0; timerPaused = false; lastPhase = nil
         case .stop?: stopTimer()
         case let spec?:
-            timerSpec = spec; timerStart = Date(); timerElapsedBeforePause = 0; timerPaused = false; timerFired = false
+            timerSpec = spec; timerStart = Date(); timerElapsedBeforePause = 0; timerPaused = false; lastPhase = nil
             timerTick?.invalidate()
             timerTick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
         case nil: break
         }
+        refresh()
     }
 
+    // Alert whenever the timer enters a new phase: countdown done, or a pomodoro work/break switch.
     private func tick() {
         refresh()
         guard let status = timerStatus else { return }
-        let phaseEnded = status.hasPrefix("⏰") || (status.hasPrefix("☕") && status.contains("break") && timerPhaseJustChanged())
-        if phaseEnded, !timerFired {
-            timerFired = true
-            NSSound(named: "Glass")?.play()
-            NSApp.activate(ignoringOtherApps: true)
-            textView.window?.makeKeyAndOrderFront(nil)
-        }
-        if status.hasPrefix("🍅") { timerFired = false }
-    }
-
-    private var lastPhaseWasWork = true
-    private func timerPhaseJustChanged() -> Bool {
-        let isWork = timerStatus?.hasPrefix("🍅") ?? true
-        defer { lastPhaseWasWork = isWork }
-        return lastPhaseWasWork != isWork
+        let phase = status.components(separatedBy: " ").prefix(2).joined(separator: " ")  // "⏰ Time's", "☕ break", "🍅 work"
+            + (status.contains("round") ? status.components(separatedBy: "round")[1] : "")
+        defer { lastPhase = phase }
+        guard let previous = lastPhase, previous != phase, !status.hasPrefix("⏳") else { return }
+        NSSound(named: "Glass")?.play()
+        NSApp.activate(ignoringOtherApps: true)
+        textView.window?.makeKeyAndOrderFront(nil)
     }
 
     private func stopTimer() {
-        timerTick?.invalidate(); timerTick = nil; timerSpec = nil; timerPaused = false
+        timerTick?.invalidate(); timerTick = nil; timerSpec = nil; timerPaused = false; lastPhase = nil
         if Keywords.detect(textView.string).keyword != .timer { timerLine = "" }
     }
 }

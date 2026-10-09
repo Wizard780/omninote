@@ -25,3 +25,4 @@ Build "omninote", an open alternative to Antinote (see ANTINOTE_RE.md), as a nat
 - Not verified: ⌥A global hotkey and checkbox click (synthetic input needs Accessibility access, which is denied here). Timer restarts on relaunch (state not persisted; skipped).
 ## Next
 - Subagent code review, fix findings, commit.
+- 2026-10-08 Review fixed (11 findings + 3 minor): timer input validation, undo registration for programmatic edits, number regex backtracking, keyword-alone detection, "/x" in URLs, variable substitution without exponents, comma thousands vs decimal, pomodoro phase alerts, timer command debounce, LIKE escaping, link scheme allowlist, nil editor on failed store, empty stack guard. 99 checks pass; app relaunched OK.
