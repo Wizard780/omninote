@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.minSize = NSSize(width: 260, height: 200)
         window.contentView = editor.stack
         window.setFrameAutosaveName("main")
-        window.center()
+        if !window.setFrameUsingName("main") { window.center() }
         buildMenu()
         loadThemes()
         hotKey = HotKey { [weak self] in self?.toggleVisibility() }

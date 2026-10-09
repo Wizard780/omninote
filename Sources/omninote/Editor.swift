@@ -190,7 +190,8 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         }
         style()
         let (keyword, argument, title) = Keywords.detect(textView.string)
-        if keyword == .timer { updateTimer(argument: argument, title: title) } else { stopTimer() }
+        // A running timer keeps going while you browse other notes; it stops only when its own note drops the keyword.
+        if keyword == .timer { updateTimer(argument: argument, title: title) } else if current?.id == timerNoteId { stopTimer() }
         let position = "\(index + 1)/\(notes.count)"
         let parts = [timerStatus ?? processed.status, title.map { "“\($0)”" }, position].compactMap { $0 }
         statusLabel.stringValue = parts.joined(separator: "  ·  ")
@@ -329,9 +330,15 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
 
     // MARK: timer
 
+    private var timerNoteId: String?
+
+    private var timerElapsed: TimeInterval {
+        timerPaused ? timerElapsedBeforePause : timerElapsedBeforePause + Date().timeIntervalSince(timerStart)
+    }
+
     private var timerStatus: String? {
         guard let spec = timerSpec else { return nil }
-        let elapsed = timerPaused ? timerElapsedBeforePause : timerElapsedBeforePause + Date().timeIntervalSince(timerStart)
+        let elapsed = timerElapsed
         let paused = timerPaused ? " (paused)" : ""
         switch spec {
         case .stopwatch: return "⏱ " + Keywords.clock(elapsed) + paused
@@ -364,6 +371,7 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         case .stop?: stopTimer()
         case let spec?:
             timerSpec = spec; timerStart = Date(); timerElapsedBeforePause = 0; timerPaused = false; lastPhase = nil
+            timerNoteId = current?.id
             timerTick?.invalidate()
             timerTick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
         case nil: break
@@ -374,18 +382,17 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
     // Alert whenever the timer enters a new phase: countdown done, or a pomodoro work/break switch.
     private func tick() {
         refresh()
-        guard let status = timerStatus else { return }
-        let phase = status.components(separatedBy: " ").prefix(2).joined(separator: " ")  // "⏰ Time's", "☕ break", "🍅 work"
-            + (status.contains("round") ? status.components(separatedBy: "round")[1] : "")
+        guard let spec = timerSpec else { return }
+        let phase = Keywords.timerPhase(spec, elapsed: timerElapsed)
         defer { lastPhase = phase }
-        guard let previous = lastPhase, previous != phase, !status.hasPrefix("⏳") else { return }
+        guard let previous = lastPhase, previous != phase else { return }
         NSSound(named: "Glass")?.play()
         NSApp.activate(ignoringOtherApps: true)
         textView.window?.makeKeyAndOrderFront(nil)
     }
 
     private func stopTimer() {
-        timerTick?.invalidate(); timerTick = nil; timerSpec = nil; timerPaused = false; lastPhase = nil
+        timerTick?.invalidate(); timerTick = nil; timerSpec = nil; timerPaused = false; lastPhase = nil; timerNoteId = nil
         if Keywords.detect(textView.string).keyword != .timer { timerLine = "" }
     }
 }

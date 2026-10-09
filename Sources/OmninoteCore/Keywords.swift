@@ -195,6 +195,18 @@ public enum Keywords {
         return v
     }
 
+    /// Which phase a running timer is in; the app alerts whenever this changes.
+    public static func timerPhase(_ spec: TimerSpec, elapsed: Double) -> String {
+        switch spec {
+        case .stopwatch: return "run"
+        case .countdown(let s): return elapsed >= s ? "done" : "run"
+        case .pomodoro(let w, let r):
+            let n = Int(elapsed / (w + r))
+            return "\(n)-" + (elapsed.truncatingRemainder(dividingBy: w + r) < w ? "work" : "break")
+        default: return ""
+        }
+    }
+
     public static func clock(_ seconds: Double) -> String {
         let s = seconds.isFinite ? max(0, Int(min(seconds, maxSeconds).rounded())) : 0
         return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)

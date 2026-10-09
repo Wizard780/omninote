@@ -26,3 +26,5 @@ Build "omninote", an open alternative to Antinote (see ANTINOTE_RE.md), as a nat
 ## Next
 - Subagent code review, fix findings, commit.
 - 2026-10-08 Review fixed (11 findings + 3 minor): timer input validation, undo registration for programmatic edits, number regex backtracking, keyword-alone detection, "/x" in URLs, variable substitution without exponents, comma thousands vs decimal, pomodoro phase alerts, timer command debounce, LIKE escaping, link scheme allowlist, nil editor on failed store, empty stack guard. 99 checks pass; app relaunched OK.
+- 2026-10-08 Advisor pass: timer phase now computed from spec (stopwatch no longer alerts each tick), timer survives note switching, window frame restores. 105 checks pass. Test DB and theme default removed so first launch is clean.
+## Status: done. Build with `make run`.
