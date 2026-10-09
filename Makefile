@@ -15,7 +15,7 @@ $(BUILD)/libOmninoteCore.a: $(CORE)
 	swiftc -O -emit-library -static -emit-module -module-name OmninoteCore -emit-module-path $(BUILD)/OmninoteCore.swiftmodule $(CORE) -o $@
 
 $(BUILD)/omninote: $(BUILD)/libOmninoteCore.a $(APP)
-	swiftc -O -parse-as-library -module-name omninote -I $(BUILD) -L $(BUILD) -lOmninoteCore -lsqlite3 -framework AppKit -framework Carbon $(APP) -o $@
+	swiftc -O -parse-as-library -module-name omninote -I $(BUILD) -L $(BUILD) -lOmninoteCore -lsqlite3 -framework AppKit -framework Carbon -framework SwiftUI $(APP) -o $@
 
 $(BUILD)/tests: $(CORE) $(TESTS)
 	@mkdir -p $(BUILD)

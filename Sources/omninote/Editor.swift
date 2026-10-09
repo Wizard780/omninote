@@ -133,8 +133,10 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
     func show(_ i: Int, direction: CGFloat = 0) {
         flush()
         guard !notes.isEmpty else { statusLabel.stringValue = "Could not create a note (is the disk writable?)"; return }
-        index = max(0, min(i, notes.count - 1))
+        timerCommandDebounce?.invalidate()
         animateSwap(direction: direction) { [self] in
+            flush()  // anything typed during the slide still belongs to the note that was showing
+            index = max(0, min(i, notes.count - 1))
             processing = true
             textView.string = notes[index].content
             textView.undoManager?.removeAllActions()
@@ -204,7 +206,7 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         pillTimer?.invalidate()
         pillTimer = Timer.scheduledTimer(withTimeInterval: 1.6, repeats: false) { [weak self] _ in
             NSAnimationContext.runAnimationGroup({ ctx in ctx.duration = 0.25; self?.pill.animator().alphaValue = 0 },
-                                                completionHandler: { self?.pill.isHidden = true })
+                                                completionHandler: { if self?.pill.alphaValue == 0 { self?.pill.isHidden = true } })
         }
     }
 
@@ -276,6 +278,10 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
 
     /// Run the keyword processor, write back any rewritten text, restyle, update the status bar.
     private func refresh() {
+        if textView.string.contains(where: { $0 == "\r" || $0 == "\u{2028}" || $0 == "\u{2029}" || $0 == "\u{85}" }) {
+            replaceText(with: textView.string.replacingOccurrences(of: "\r\n", with: "\n")
+                .replacingOccurrences(of: "[\r\u{2028}\u{2029}\u{85}]", with: "\n", options: .regularExpression))
+        }
         let processed = Keywords.process(textView.string)
         if processed.text != textView.string {
             replaceText(with: processed.text)
@@ -392,8 +398,10 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         style()
     }
 
-    func adjustFont(by delta: CGFloat) {
-        fontSize = max(9, min(40, fontSize + delta))
+    func adjustFont(by delta: CGFloat) { setFontSize(fontSize + delta) }
+
+    func setFontSize(_ size: CGFloat) {
+        fontSize = max(9, min(40, size))
         UserDefaults.standard.set(fontSize, forKey: "fontSize")
         style()
     }
@@ -462,7 +470,11 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         let line = argument.lowercased().trimmingCharacters(in: .whitespaces)
         guard line != timerLine else { return }
         timerCommandDebounce?.invalidate()
-        timerCommandDebounce = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: false) { [weak self] _ in self?.applyTimerLine(line) }
+        let noteId = current?.id
+        timerCommandDebounce = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: false) { [weak self] _ in
+            guard let self, self.current?.id == noteId else { return }
+            self.applyTimerLine(line)
+        }
     }
 
     private func applyTimerLine(_ line: String) {

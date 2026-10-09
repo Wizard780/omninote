@@ -111,6 +111,8 @@ expect(Keywords.process("list\n[ ").text, "list\n[ ] ")
 expect(Keywords.process("list\n[]milk").text, "list\n[ ] milk")
 expect(Keywords.process("list\n[x").text, "list\n[x] ")
 expect(Keywords.process("list\n[X] done").text, "list\n[x] done")
+expect(Keywords.process("list\n[ ]").text, "list\n", "backspacing the marker's space deletes the item")
+expect(Keywords.process("list\n  [x]").text, "list\n  ")
 expect(Keywords.process("list\n[note] in brackets").text, "list\n[ ] [note] in brackets", "real bracketed text is kept")
 
 expect(Keywords.parseTimer(""), .stopwatch)

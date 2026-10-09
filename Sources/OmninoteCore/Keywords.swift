@@ -134,6 +134,8 @@ public enum Keywords {
             var body = String(line.dropFirst(indent.count))
             if body.hasPrefix("- ") { body.removeFirst(2) }
             var isChecked = false
+            // Backspacing the space after an empty marker ("[ ] " → "[ ]") means "delete this item".
+            if ["[ ]", "[x]"].contains(body.lowercased()) { lines[i] = indent; continue }
             // A complete or half-typed marker ("[", "[ ", "[]", "[x", "[x] ") is the checkbox, never item text.
             if let m = markerRegex.firstMatch(in: body, range: NSRange(location: 0, length: body.utf16.count)) {
                 let marker = (body as NSString).substring(with: m.range)

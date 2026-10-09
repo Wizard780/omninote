@@ -44,7 +44,9 @@ menu-bar icon).
 Notes auto-save and live in `~/Library/Application Support/omninote/notes.sqlite3`, the same `notes`
 table shape Antinote 1.x uses. Auto-delete of untouched notes (off by default) is in the app menu.
 
-The editor font is SF Mono by default; change it under Notes > Font (System, Menlo, or any installed font).
+**Settings:** hover the top-right corner of the window and click the gear (or open `omninote://settings`).
+Theme, font, text size, menu-bar icon, Dock icon, keep-on-top, and auto-delete all live there. With both
+the menu-bar and Dock icons off, ⌥A is the only way back in. The editor font is SF Mono by default.
 
 ## Themes
 
@@ -60,6 +62,7 @@ omninote://createNote?content=hello%20world
 omninote://appendToCurrent?content=more
 omninote://nextNote
 omninote://previousNote
+omninote://settings
 ```
 
 ## Not implemented (on purpose, for now)

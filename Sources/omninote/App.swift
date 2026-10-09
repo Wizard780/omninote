@@ -1,5 +1,6 @@
 import AppKit
 import OmninoteCore
+import SwiftUI
 import UniformTypeIdentifiers
 
 @main
@@ -22,6 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var hotKey: HotKey?
     var statusItem: NSStatusItem?
     var themes: [Theme] = []
+    let settings = SettingsModel()
+    let gear = HoverCornerButton(frame: .zero)
+    var popover: NSPopover?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         try? FileManager.default.createDirectory(at: AppDelegate.themesDir, withIntermediateDirectories: true)
@@ -45,13 +49,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrameAutosaveName("main")
         if !window.setFrameUsingName("main") { window.center() }
         buildMenu()
-        loadThemes()
         hotKey = HotKey { [weak self] in self?.toggleVisibility() }
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem?.button?.image = NSImage(systemSymbolName: "note.text", accessibilityDescription: "omninote")
-        statusItem?.button?.target = self
-        statusItem?.button?.action = #selector(toggleVisibility)
-        for i in NSApp.mainMenu!.item(withTitle: "Notes")!.submenu!.item(withTitle: "Font")!.submenu!.items { i.state = i.title == editor.fontFamily ? .on : .off }
+
+        gear.translatesAutoresizingMaskIntoConstraints = false
+        gear.onClick = { [weak self] in self?.showSettings() }
+        editor.stack.addSubview(gear)
+        NSLayoutConstraint.activate([
+            gear.trailingAnchor.constraint(equalTo: editor.stack.trailingAnchor),
+            gear.topAnchor.constraint(equalTo: editor.stack.topAnchor),
+            gear.widthAnchor.constraint(equalToConstant: 72),
+            gear.heightAnchor.constraint(equalToConstant: 48),
+        ])
+        settings.onChange = { [weak self] in self?.applySettings() }
+        loadThemes()  // also calls applySettings()
+    }
+
+    /// Push every setting into the live app and keep the menu check marks in sync.
+    func applySettings() {
+        editor.apply(theme: themes.first { $0.name == settings.themeName } ?? themes.first ?? .default)
+        editor.fontFamily = settings.fontFamily
+        editor.setFontSize(CGFloat(settings.fontSize))
+        window.level = settings.pinOnTop ? .floating : .normal
+        if settings.showInMenuBar, statusItem == nil {
+            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+            statusItem?.button?.image = NSImage(systemSymbolName: "note.text", accessibilityDescription: "omninote")
+            statusItem?.button?.target = self
+            statusItem?.button?.action = #selector(toggleVisibility)
+        } else if !settings.showInMenuBar, let item = statusItem {
+            NSStatusBar.system.removeStatusItem(item); statusItem = nil
+        }
+        let policy: NSApplication.ActivationPolicy = settings.showInDock ? .regular : .accessory
+        if NSApp.activationPolicy() != policy {
+            NSApp.setActivationPolicy(policy)
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+        }
+        guard let main = NSApp.mainMenu, let appMenu = main.items.first?.submenu, let notes = main.item(withTitle: "Notes")?.submenu else { return }
+        for i in appMenu.item(withTitle: "Theme")?.submenu?.items ?? [] { i.state = i.title == settings.themeName ? .on : .off }
+        for i in appMenu.items.first(where: { $0.title.hasPrefix("Auto-delete") })?.submenu?.items ?? [] { i.state = i.tag == settings.autoDeleteDays ? .on : .off }
+        for i in notes.item(withTitle: "Font")?.submenu?.items ?? [] { i.state = i.title == settings.fontFamily ? .on : .off }
+        notes.item(withTitle: "Pin Window on Top")?.state = settings.pinOnTop ? .on : .off
+    }
+
+    func showSettings() {
+        if let p = popover, p.isShown { p.close(); return }
+        let view = SettingsView(model: settings,
+                                openThemesFolder: { [weak self] in self?.openThemesFolder() },
+                                reloadThemes: { [weak self] in self?.loadThemes() },
+                                chooseFont: { [weak self] in self?.showFontPanel() })
+        let p = NSPopover()
+        p.behavior = .transient
+        p.contentViewController = NSHostingController(rootView: view)
+        p.show(relativeTo: gear.button.bounds, of: gear.button, preferredEdge: .minY)
+        popover = p
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -75,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "appendToCurrent": editor.append(content)
             case "nextNote": editor.swipe(left: true)
             case "previousNote": editor.swipe(left: false)
+            case "settings": DispatchQueue.main.async { [weak self] in self?.showSettings() }  // after the activation below, or the transient popover closes
             default: continue
             }
             window.makeKeyAndOrderFront(nil)
@@ -173,32 +224,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func biggerText() { editor.adjustFont(by: 1) }
     @objc func smallerText() { editor.adjustFont(by: -1) }
     @objc func pickFont(_ sender: NSMenuItem) {
-        if sender.title == "Other…" {
-            NSFontManager.shared.target = self
-            NSFontPanel.shared.setPanelFont(NSFont(name: editor.fontFamily, size: 14) ?? .monospacedSystemFont(ofSize: 14, weight: .regular), isMultiple: false)
-            NSFontPanel.shared.orderFront(nil)
-            return
-        }
-        editor.fontFamily = sender.title
-        for i in sender.menu!.items { i.state = i == sender ? .on : .off }
+        if sender.title == "Other…" { showFontPanel(); return }
+        settings.fontFamily = sender.title
+    }
+
+    func showFontPanel() {
+        NSFontManager.shared.target = self
+        NSFontPanel.shared.setPanelFont(NSFont(name: settings.fontFamily, size: 14) ?? .monospacedSystemFont(ofSize: 14, weight: .regular), isMultiple: false)
+        NSFontPanel.shared.orderFront(nil)
     }
 
     @objc func changeFont(_ sender: Any?) {
         let font = NSFontManager.shared.convert(.systemFont(ofSize: 14))
-        editor.fontFamily = font.familyName ?? font.fontName
+        let name = font.familyName ?? font.fontName
+        if !settings.fontNames.contains(name) { settings.fontNames.append(name) }
+        settings.fontFamily = name
     }
 
-    @objc func togglePin() { window.level = window.level == .floating ? .normal : .floating }
+    @objc func togglePin() { settings.pinOnTop.toggle() }
     @objc func openThemesFolder() { NSWorkspace.shared.open(AppDelegate.themesDir) }
 
     @objc func about() {
         NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "omninote", .credits: NSAttributedString(string: "An open scratchpad. Type a keyword on the first line: math, sum, avg, count, list, timer, code.")])
     }
 
-    @objc func setAutoDelete(_ sender: NSMenuItem) {
-        UserDefaults.standard.set(sender.tag, forKey: "autoDeleteDays")
-        for i in sender.menu!.items { i.state = i == sender ? .on : .off }
-    }
+    @objc func setAutoDelete(_ sender: NSMenuItem) { settings.autoDeleteDays = sender.tag }
 
     @objc func exportNote() {
         guard let note = editor.current else { return }
@@ -217,23 +267,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var found: [Theme] = []
         if let bundled = Bundle.main.resourceURL { found += Theme.loadAll(in: bundled) }
         found += Theme.loadAll(in: AppDelegate.themesDir)
-        themes = found.isEmpty ? [.default] : found
+        var byName: [String: Theme] = [:]
+        for t in found { byName[t.name] = t }  // later (user folder) entries override bundled ones
+        themes = byName.isEmpty ? [.default] : byName.values.sorted { $0.name < $1.name }
         let menu = NSApp.mainMenu!.items[0].submenu!.items.first { $0.title == "Theme" }!.submenu!
         menu.removeAllItems()
-        let selected = UserDefaults.standard.string(forKey: "theme") ?? Theme.default.name
         for (i, t) in themes.enumerated() {
             let item = NSMenuItem(title: t.name, action: #selector(pickTheme(_:)), keyEquivalent: ""); item.tag = i
-            item.state = t.name == selected ? .on : .off
             menu.addItem(item)
         }
-        editor.apply(theme: themes.first { $0.name == selected } ?? themes[0])
-        let days = UserDefaults.standard.integer(forKey: "autoDeleteDays")
-        for i in NSApp.mainMenu!.items[0].submenu!.items.first(where: { $0.title.hasPrefix("Auto-delete") })!.submenu!.items { i.state = i.tag == days ? .on : .off }
+        settings.themeNames = themes.map(\.name)
+        if !settings.themeNames.contains(settings.themeName) { settings.themeName = themes[0].name }  // triggers applySettings
+        else { applySettings() }
     }
 
-    @objc func pickTheme(_ sender: NSMenuItem) {
-        for i in sender.menu!.items { i.state = i == sender ? .on : .off }
-        UserDefaults.standard.set(themes[sender.tag].name, forKey: "theme")
-        editor.apply(theme: themes[sender.tag])
-    }
+    @objc func pickTheme(_ sender: NSMenuItem) { settings.themeName = themes[sender.tag].name }
 }
