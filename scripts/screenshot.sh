@@ -3,7 +3,8 @@
 # usage: scripts/screenshot.sh <AppName> <out.png>
 set -e
 APP="${1:-omninote}"; OUT="${2:-/tmp/$APP.png}"
-WID=/tmp/omninote-wid
+WID="$(cd "$(dirname "$0")/.." && pwd)/build/wid"  # repo-local, not /tmp: never execute a world-writable path
+mkdir -p "$(dirname "$WID")"
 if [ ! -x "$WID" ]; then
   TMP=$(mktemp -d)
   cat > "$TMP/wid.swift" <<'EOF'
