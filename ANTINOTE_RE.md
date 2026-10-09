@@ -257,16 +257,4 @@ Analytics: 1.1.7 has an `AnalyticsManager` class, Sentry, and `PrivacyPreference
 
 ## 10. Evidence index
 
-```
-evidence/
-  antinote-1.1.7-trial-expired-window.png   screenshot of the running app
-  schema-1.1.7.sql                           SQLite schema (no note content)
-  datamodel-2.1.3.md                         Core Data model doc shipped in the 2.1.3 bundle
-  classes-1.1.7.txt / classes-2.1.3.txt      Swift class inventories
-  objc-classes-*.txt                         full otool -oV dumps (ivars per class)
-  strings-*.txt                              full strings dumps
-  theme-sample-dracula.json                  theme file format
-  antinote-extensions-base-v0.0.1.js         extension host base API (from 2.1.3 bundle)
-  sample-openai-extension.js                 extension example (from 2.1.3 bundle)
-  extension-sample-date.json                 extension.json manifest example (official repo)
-```
+The raw extracts this report cites (binary string dumps, Objective-C runtime dumps, Antinote's bundled extension JavaScript, the SQLite schema, a theme sample) were kept in an `evidence/` folder while the analysis was done. They are Antinote's own shipped artifacts, so they were removed before this repository was made public. Regenerate them with `strings -a -arch arm64` and `otool -arch arm64 -oV` on `Antinote.app/Contents/MacOS/Antinote`, and `sqlite3 notes.sqlite3 .schema` on a copy of the notes database.

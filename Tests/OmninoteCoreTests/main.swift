@@ -164,7 +164,7 @@ do {
 // MARK: Theme
 do {
     let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("evidence/theme-sample-dracula.json")
+        .appendingPathComponent("Resources/themes/dracula.json")
     let theme = try Theme.load(from: url)
     expect(theme.name, "Dracula")
     expect(theme.background, "#282A36")

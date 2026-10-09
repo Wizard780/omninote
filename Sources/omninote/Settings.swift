@@ -1,4 +1,5 @@
 import AppKit
+import OmninoteCore
 import SwiftUI
 
 /// Everything the settings panel can change. Each property persists itself and calls `onChange`,
@@ -16,6 +17,7 @@ final class SettingsModel: ObservableObject {
     @Published var showInDock: Bool { didSet { defaults.set(showInDock, forKey: "showInDock"); onChange?() } }
     @Published var pinOnTop: Bool { didSet { defaults.set(pinOnTop, forKey: "pinOnTop"); onChange?() } }
     @Published var autoDeleteDays: Int { didSet { defaults.set(autoDeleteDays, forKey: "autoDeleteDays"); onChange?() } }
+    @Published var palette: Theme = .default  // the applied theme, so the panel is drawn like the editor
 
     init() {
         themeName = defaults.string(forKey: "theme") ?? "Knight"
@@ -29,47 +31,102 @@ final class SettingsModel: ObservableObject {
     }
 }
 
+extension Color {
+    init(hex: String) {
+        let c = parseHexColor(hex) ?? (0.5, 0.5, 0.5, 1)
+        self.init(.sRGB, red: c.0, green: c.1, blue: c.2, opacity: c.3)
+    }
+}
+
+/// Drawn with the editor's own theme and font instead of the system form look.
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     var openThemesFolder: () -> Void
     var reloadThemes: () -> Void
     var chooseFont: () -> Void
 
-    var body: some View {
-        Form {
-            Section("Appearance") {
-                Picker("Theme", selection: $model.themeName) {
-                    ForEach(model.themeNames, id: \.self) { Text($0) }
-                }
-                HStack {
-                    Button("Open Themes Folder", action: openThemesFolder)
-                    Button("Reload", action: reloadThemes)
-                }
-                .controlSize(.small)
-                Picker("Font", selection: $model.fontFamily) {
-                    ForEach(model.fontNames, id: \.self) { Text($0) }
-                }
-                Button("Other font…", action: chooseFont).controlSize(.small)
-                Stepper("Text size: \(Int(model.fontSize))", value: $model.fontSize, in: 9...40)
-            }
-            Section("Where omninote lives") {
-                Toggle("Show in menu bar", isOn: $model.showInMenuBar)
-                Toggle("Show in Dock", isOn: $model.showInDock)
-                Toggle("Keep window on top", isOn: $model.pinOnTop)
-                if !model.showInMenuBar && !model.showInDock {
-                    Text("With both off, ⌥A is the only way to bring omninote back.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            Section("Notes") {
-                Picker("Auto-delete untouched notes after", selection: $model.autoDeleteDays) {
-                    Text("Never").tag(0); Text("1 day").tag(1); Text("1 week").tag(7); Text("1 month").tag(30); Text("1 year").tag(365)
-                }
-                Text("Applied at launch. Global hotkey: ⌥A.").font(.caption).foregroundStyle(.secondary)
-            }
+    private var bg: Color { Color(hex: model.palette.background) }
+    private var fg: Color { Color(hex: model.palette.typeMain) }
+    private var dim: Color { Color(hex: model.palette.typeLight) }
+    private var accent: Color { Color(hex: model.palette.accent1Main) }
+    private var font: Font {
+        switch model.fontFamily {
+        case "System": return .system(size: 13)
+        case "SF Mono": return .system(size: 13, design: .monospaced)
+        default: return .custom(model.fontFamily, size: 13)
         }
-        .formStyle(.grouped)
-        .frame(width: 340, height: 420)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            section("appearance")
+            row("theme") {
+                Picker("", selection: $model.themeName) { ForEach(model.themeNames, id: \.self) { Text($0) } }
+            }
+            row("font") {
+                Picker("", selection: $model.fontFamily) { ForEach(model.fontNames, id: \.self) { Text($0) } }
+            }
+            row("text size") {
+                HStack(spacing: 6) {
+                    small("−") { model.fontSize = max(9, model.fontSize - 1) }
+                    Text("\(Int(model.fontSize))").frame(width: 24)
+                    small("+") { model.fontSize = min(40, model.fontSize + 1) }
+                }
+            }
+            HStack(spacing: 8) {
+                small("themes folder", action: openThemesFolder)
+                small("reload themes", action: reloadThemes)
+                small("other font…", action: chooseFont)
+            }
+            .padding(.vertical, 8)
+
+            section("where omninote lives")
+            row("show in menu bar") { Toggle("", isOn: $model.showInMenuBar) }
+            row("show in dock") { Toggle("", isOn: $model.showInDock) }
+            row("keep window on top") { Toggle("", isOn: $model.pinOnTop) }
+            if !model.showInMenuBar && !model.showInDock {
+                Text("// with both off, ⌥A is the only way back in").foregroundStyle(dim).padding(.vertical, 6)
+            }
+
+            section("notes")
+            row("auto-delete untouched notes") {
+                Picker("", selection: $model.autoDeleteDays) {
+                    Text("never").tag(0); Text("1 day").tag(1); Text("1 week").tag(7); Text("1 month").tag(30); Text("1 year").tag(365)
+                }
+            }
+            Text("// ⌥A shows or hides · ⌘[ ⌘] move between notes").foregroundStyle(dim).padding(.top, 10)
+        }
+        .font(font)
+        .foregroundStyle(fg)
+        .tint(accent)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .padding(18)
+        .frame(width: 380, alignment: .leading)
+        .background(bg)
+    }
+
+    private func section(_ title: String) -> some View {
+        Text(title).foregroundStyle(accent).fontWeight(.bold).padding(.top, 12).padding(.bottom, 6)
+    }
+
+    private func row<C: View>(_ label: String, @ViewBuilder control: () -> C) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            control().fixedSize()
+        }
+        .padding(.vertical, 5)
+        .overlay(alignment: .bottom) { Rectangle().fill(dim.opacity(0.25)).frame(height: 1) }
+    }
+
+    private func small(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).fixedSize().padding(.horizontal, 8).padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: 6).fill(dim.opacity(0.18)))
+        }
+        .buttonStyle(.plain)
     }
 }
 

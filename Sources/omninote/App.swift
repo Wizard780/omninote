@@ -66,7 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Push every setting into the live app and keep the menu check marks in sync.
     func applySettings() {
-        editor.apply(theme: themes.first { $0.name == settings.themeName } ?? themes.first ?? .default)
+        let theme = themes.first { $0.name == settings.themeName } ?? themes.first ?? .default
+        editor.apply(theme: theme)
+        if settings.palette != theme { settings.palette = theme }
         editor.fontFamily = settings.fontFamily
         editor.setFontSize(CGFloat(settings.fontSize))
         window.level = settings.pinOnTop ? .floating : .normal
@@ -99,6 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 chooseFont: { [weak self] in self?.showFontPanel() })
         let p = NSPopover()
         p.behavior = .transient
+        p.appearance = NSAppearance(named: settings.palette.isDarkTheme ? .darkAqua : .aqua)
         p.contentViewController = NSHostingController(rootView: view)
         p.show(relativeTo: gear.button.bounds, of: gear.button, preferredEdge: .minY)
         popover = p
