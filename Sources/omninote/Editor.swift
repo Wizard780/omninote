@@ -16,6 +16,10 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
     let searchField = NSSearchField()
     let statusLabel = NSTextField(labelWithString: "")
     let stack = NSStackView()
+    let pill = NSTextField(labelWithString: "")
+    private var pillTimer: Timer?
+    private var justNavigated = false
+    var fontFamily: String = UserDefaults.standard.string(forKey: "fontFamily") ?? "SF Mono" { didSet { UserDefaults.standard.set(fontFamily, forKey: "fontFamily"); style() } }
 
     private(set) var notes: [Note] = []
     private(set) var index = 0
@@ -37,9 +41,18 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
 
     init(store: Store) {
         self.store = store
-        scrollView = NSTextView.scrollableTextView()
-        textView = scrollView.documentView as! NSTextView
+        let swipeView = SwipeTextView(frame: .zero)
+        textView = swipeView
+        scrollView = NSScrollView()
+        scrollView.documentView = swipeView
+        swipeView.autoresizingMask = [.width]
+        swipeView.isVerticallyResizable = true
+        swipeView.isHorizontallyResizable = false
+        swipeView.textContainer?.widthTracksTextView = true
+        swipeView.minSize = .zero
+        swipeView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         super.init()
+        swipeView.onSwipe = { [weak self] left in self?.swipe(left: left) }
 
         textView.delegate = self
         textView.isRichText = true
@@ -79,6 +92,18 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
             statusLabel.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: 14),
             statusLabel.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -14),
             scrollView.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+        pill.wantsLayer = true
+        pill.layer?.cornerRadius = 13
+        pill.alignment = .center
+        pill.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        pill.isHidden = true
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        stack.addSubview(pill)
+        NSLayoutConstraint.activate([
+            pill.centerXAnchor.constraint(equalTo: stack.centerXAnchor),
+            pill.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -12),
+            pill.heightAnchor.constraint(equalToConstant: 26),
         ])
 
         reload()
@@ -146,10 +171,35 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         dirty = false
     }
 
+    /// Antinote's swipe rules: past the newest note creates one; away from an empty note deletes it.
+    func swipe(left: Bool) {
+        let target = left ? index - 1 : index + 1
+        if let n = current, n.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, notes.count > 1 {
+            deleteCurrent()
+            showPill("Empty note deleted")
+            if left { show(max(0, index - 1)) }  // deleteCurrent reloads at the same index (the older neighbour)
+            return
+        }
+        if target < 0 { newNote(); return }
+        guard target < notes.count else { showPill("Oldest note"); return }
+        show(target)
+        justNavigated = true
+    }
+
+    func showPill(_ message: String) {
+        pill.stringValue = "  \(message)  "
+        pill.textColor = NSColor(hex: theme.background)
+        pill.layer?.backgroundColor = NSColor(hex: theme.typeMain).withAlphaComponent(0.85).cgColor
+        pill.isHidden = false
+        pillTimer?.invalidate()
+        pillTimer = Timer.scheduledTimer(withTimeInterval: 1.8, repeats: false) { [weak self] _ in self?.pill.isHidden = true }
+    }
+
     // MARK: editing
 
     func textDidChange(_ notification: Notification) {
         guard !processing else { return }
+        justNavigated = false
         dirty = true
         saveTimer?.invalidate()
         saveTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in self?.flush() }
@@ -158,6 +208,15 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
 
     func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         if selector == #selector(NSResponder.cancelOperation(_:)) && !searchField.isHidden { closeSearch(); return true }
+        if justNavigated {
+            justNavigated = false
+            let toEnd = [#selector(NSResponder.moveUp(_:)), #selector(NSResponder.moveLeft(_:))].contains(selector)
+            let toStart = [#selector(NSResponder.moveDown(_:)), #selector(NSResponder.moveRight(_:))].contains(selector)
+            if toEnd || toStart {
+                textView.setSelectedRange(NSRange(location: toEnd ? textView.string.utf16.count : 0, length: 0))
+                return true
+            }
+        }
         return false
     }
 
@@ -226,7 +285,7 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
         let text = textView.string as NSString
         let full = NSRange(location: 0, length: text.length)
         let (keyword, _, _) = Keywords.detect(textView.string)
-        let base: NSFont = keyword == .code ? .monospacedSystemFont(ofSize: fontSize, weight: .regular) : .systemFont(ofSize: fontSize)
+        let base = baseFont(size: fontSize, bold: false)
         let main = NSColor(hex: theme.typeMain), light = NSColor(hex: theme.typeLight), subtle = NSColor(hex: theme.typeSubtle)
         let accent = NSColor(hex: theme.accent1Main), done = NSColor(hex: theme.accent3Main)
 
@@ -237,14 +296,14 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
             defer { lineNo += 1 }
             let line = text.substring(with: lineRange)
             if lineNo == 0, keyword != nil {
-                storage.addAttributes([.foregroundColor: accent, .font: NSFont.boldSystemFont(ofSize: self.fontSize)], range: lineRange)
+                storage.addAttributes([.foregroundColor: accent, .font: self.baseFont(size: self.fontSize, bold: true)], range: lineRange)
                 return
             }
             if line.trimmingCharacters(in: .whitespaces).hasPrefix("//") {
                 storage.addAttribute(.foregroundColor, value: light, range: lineRange); return
             }
             if line.hasPrefix("#") {
-                storage.addAttribute(.font, value: NSFont.boldSystemFont(ofSize: self.fontSize + 2), range: lineRange); return
+                storage.addAttribute(.font, value: self.baseFont(size: self.fontSize + 2, bold: true), range: lineRange); return
             }
             if keyword == .math, let eq = line.range(of: " = ") {
                 let start = lineRange.location + line.utf16.distance(from: line.startIndex, to: eq.lowerBound)
@@ -274,6 +333,17 @@ final class EditorController: NSObject, NSTextViewDelegate, NSSearchFieldDelegat
     }
 
     // MARK: theme & font
+
+    private func baseFont(size: CGFloat, bold: Bool) -> NSFont {
+        let weight: NSFont.Weight = bold ? .bold : .regular
+        switch fontFamily {
+        case "System": return .systemFont(ofSize: size, weight: weight)
+        case "SF Mono": return .monospacedSystemFont(ofSize: size, weight: weight)
+        default:
+            let font = NSFont(name: fontFamily, size: size) ?? .monospacedSystemFont(ofSize: size, weight: weight)
+            return bold ? NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) : font
+        }
+    }
 
     func apply(theme: Theme) {
         self.theme = theme

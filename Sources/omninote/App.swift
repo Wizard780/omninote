@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.image = NSImage(systemSymbolName: "note.text", accessibilityDescription: "omninote")
         statusItem?.button?.target = self
         statusItem?.button?.action = #selector(toggleVisibility)
+        for i in NSApp.mainMenu!.item(withTitle: "Notes")!.submenu!.item(withTitle: "Font")!.submenu!.items { i.state = i.title == editor.fontFamily ? .on : .off }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -145,6 +146,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notes.addItem(.separator())
         notes.addItem(item("Bigger Text", #selector(biggerText), "+"))
         notes.addItem(item("Smaller Text", #selector(smallerText), "-"))
+        let fontMenu = NSMenu(title: "Font")
+        for name in ["SF Mono", "System", "Menlo", "Courier New", "Other…"] { fontMenu.addItem(withTitle: name, action: #selector(pickFont(_:)), keyEquivalent: "") }
+        let fontItem = NSMenuItem(title: "Font", action: nil, keyEquivalent: ""); fontItem.submenu = fontMenu
+        notes.addItem(fontItem)
         main.addItem(withTitle: "Notes", action: nil, keyEquivalent: "").submenu = notes
 
         let windowMenu = NSMenu(title: "Window")
@@ -165,6 +170,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func find() { editor.openSearch() }
     @objc func biggerText() { editor.adjustFont(by: 1) }
     @objc func smallerText() { editor.adjustFont(by: -1) }
+    @objc func pickFont(_ sender: NSMenuItem) {
+        if sender.title == "Other…" {
+            NSFontManager.shared.target = self
+            NSFontPanel.shared.setPanelFont(NSFont(name: editor.fontFamily, size: 14) ?? .monospacedSystemFont(ofSize: 14, weight: .regular), isMultiple: false)
+            NSFontPanel.shared.orderFront(nil)
+            return
+        }
+        editor.fontFamily = sender.title
+        for i in sender.menu!.items { i.state = i == sender ? .on : .off }
+    }
+
+    @objc func changeFont(_ sender: Any?) {
+        let font = NSFontManager.shared.convert(.systemFont(ofSize: 14))
+        editor.fontFamily = font.familyName ?? font.fontName
+    }
+
     @objc func togglePin() { window.level = window.level == .floating ? .normal : .floating }
     @objc func openThemesFolder() { NSWorkspace.shared.open(AppDelegate.themesDir) }
 

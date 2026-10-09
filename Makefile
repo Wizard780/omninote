@@ -29,7 +29,7 @@ app: $(BUILD)/omninote
 	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	cp $(BUILD)/omninote $(BUNDLE)/Contents/MacOS/omninote
 	cp Resources/Info.plist $(BUNDLE)/Contents/Info.plist
-	cp Resources/themes/*.json $(BUNDLE)/Contents/Resources/
+	cp Resources/themes/*.json Resources/omninote.icns $(BUNDLE)/Contents/Resources/
 	codesign --force --sign - $(BUNDLE)
 
 run: app

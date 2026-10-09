@@ -28,12 +28,18 @@ Type one of these on the first line of a note (add `: Title` after it to name th
 | `timer` | `timer` stopwatch · `timer 3.5` or `timer 3:30` countdown · `timer 5 1` pomodoro · `timer pomo` 25/5 · `timer p` pause · `timer r` restart · `timer s` stop. Plays a sound and brings the window forward when done. |
 | `code` | Monospace, no link detection. |
 
+Navigate with a two-finger swipe left or right (swiping past the newest note starts a new one; swiping
+away from an empty note deletes it), or with the keyboard. After navigating, ↑/← puts the caret at the
+end of the note and ↓/→ at the start.
+
 Shortcuts: ⌘N new · ⌘D delete · ⌘[ / ⌘] older / newer · ⌘1 front · ⌘⇧1 promote to front · ⌘F search ·
 ⌘S export · ⌘P pin on top · ⌘+ / ⌘- text size · **⌥A shows or hides omninote from any app** (also the
 menu-bar icon).
 
 Notes auto-save and live in `~/Library/Application Support/omninote/notes.sqlite3`, the same `notes`
 table shape Antinote 1.x uses. Auto-delete of untouched notes (off by default) is in the app menu.
+
+The editor font is SF Mono by default; change it under Notes > Font (System, Menlo, or any installed font).
 
 ## Themes
 
@@ -51,6 +57,5 @@ omninote://appendToCurrent?content=more
 
 ## Not implemented (on purpose, for now)
 
-iCloud sync, extensions, link shrinking, screenshot OCR, unit and currency conversion, trackpad swipe
-gestures (keyboard only), find-and-replace, timer state across relaunch, word stripping inside math
+iCloud sync, extensions, link shrinking, screenshot OCR, unit and currency conversion, find-and-replace, timer state across relaunch, word stripping inside math
 lines (use clean expressions; unknown words show `= ?`).
