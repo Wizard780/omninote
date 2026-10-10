@@ -1,0 +1,414 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+@font-face { font-family: SFM; src: url('file:///System/Library/Fonts/SFNSMono.ttf'); font-weight: 100 900; }
+@font-face { font-family: SFP; src: url('file:///System/Library/Fonts/SFNS.ttf'); font-weight: 100 900; }
+html, body { margin: 0; background: #0E0F13; overflow: hidden } canvas { display: block }
+</style>
+<canvas id="c"></canvas>
+<script src="lib/motion.js"></script>
+<script src="timeline.js"></script>
+<script>
+// RENDER CONTRACT: window.seek(t) paints frame t. Pure function of t, no timers, no carried state.
+const { clamp, ease, spring, track } = Motion;
+const T = window.TL;
+const c = document.getElementById('c');
+const W = c.width = innerWidth, H = c.height = innerHeight;
+const g = c.getContext('2d');
+
+// Theme colors: Resources/themes/*.json. link = NSTextView link color sampled from screenshot-list.png.
+const THEMES = {
+  knight:  { bg: '#0E0F13', fg: '#E6E6E6', subtle: '#9CA3AF', light: '#6B6F7B', accent: '#7C8CF8', rim: '#3E3F42', link: '#5A9AF8', key: '#1C1E27', keyEdge: '#2E3140' },
+  dracula: { bg: '#282A36', fg: '#F8F8F2', subtle: '#8BE9FD', light: '#6272A4', accent: '#BD93F9', rim: '#4A4C58', link: '#5A9AF8', key: '#343746', keyEdge: '#424450' },
+  paper:   { bg: '#FAF8F3', fg: '#2B2B2B', subtle: '#5F6368', light: '#9A9A9A', accent: '#3B5BDB', rim: '#D6D1C4', link: '#0068DA', key: '#EFEBE2', keyEdge: '#DDD8CC' },
+};
+const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const mix = (a, b, p) => { const A = hex(a), B = hex(b); return `rgb(${A.map((v, i) => Math.round(v + (B[i] - v) * clamp(p))).join(',')})`; };
+const lerp = (a, b, p) => a + (b - a) * p;
+
+// LAYOUT per format. Window logical size is 760x520 (the app at 2x, 380x260 pt).
+const WW = 760, WH = 520;
+function layout() {
+  const ar = W / H, f = ar < 0.8 ? 'portrait' : ar > 1.3 ? 'landscape' : 'square';
+  if (f === 'landscape') return { f, ws: 1.5, wx: 1290, wy: 540, hx: 120, hy: 470, hs: 125, sy: 560, ss: 40, kx: 126, keyY: 790, keyS: 118, keyBig: 230,
+    hook: 330, icon: { x: 640, y: 548, s: 236 }, word: { x: 820, y: 530, s: 128 }, lines: { x: 826, y: 610, s: 34 } };
+  if (f === 'portrait') return { f, ws: 1.3, wx: 540, wy: 1180, hx: 80, hy: 430, hs: 150, sy: 530, ss: 46, kx: 86, keyY: 680, keyS: 130, keyBig: 250,
+    hook: 300, icon: { x: 241, y: 960, s: 211 }, word: { x: 435, y: 995, s: 112 }, lines: { x: 440, y: 1062, s: 27 } };
+  return { f, ws: 1.2, wx: 540, wy: 718, hx: 80, hy: 200, hs: 110, sy: 268, ss: 34, kx: 330, keyY: 120, keyS: 96, keyBig: 200,
+    hook: 280, icon: { x: 261, y: 540, s: 189 }, word: { x: 475, y: 575, s: 104 }, lines: { x: 480, y: 640, s: 26 } };
+}
+const L = layout();
+const MONO = 'SFM', ADV = 0.6182;          // SF Mono advance per em, measured in Chromium (READY logs it)
+
+// ---------- tiny editor: replays keystrokes up to t ----------
+function replay(ev, t, list) {
+  const lines = [{ ch: [], checkAt: null, checked: false }];
+  let cl = 0, cc = 0, last = -1;
+  for (const e of ev) {
+    if (e.t > t) break;
+    last = e.t;
+    if (e.move) { [cl, cc] = e.move; continue; }
+    const ln = lines[cl];
+    if (e.k === '\n') { const rest = ln.ch.splice(cc); lines.splice(cl + 1, 0, { ch: rest, checkAt: null, checked: false }); cl++; cc = 0; }
+    else if (e.k === '\b') { if (cc > 0) { ln.ch.splice(cc - 1, 1); cc--; } }
+    else {
+      ln.ch.splice(cc, 0, { c: e.k, born: e.t }); cc++;
+      // list: a trailing "/x" is consumed and toggles the item (Keywords.processList)
+      if (list && cl > 0 && e.k === 'x' && cc === ln.ch.length && ln.ch[cc - 2]?.c === '/') {
+        ln.ch.splice(cc - 2, 2); cc -= 2; ln.checked = !ln.checked; ln.checkAt = e.t;
+      }
+    }
+  }
+  return { lines, cl, cc, last };
+}
+const str = (ln) => ln.ch.map((x) => x.c).join('');
+function keywordOf(first) {
+  const w = first.split(/[\s:]/)[0].toLowerCase();
+  return T.KEYWORDS.includes(w) ? w : null;
+}
+const RESULTS = { 'nights * hotel': '567', 'ans + 15%': '652.05', 'sqrt(144)': '12' };
+const fmt = (v) => v.toLocaleString('en-US', { maximumFractionDigits: 2 });
+
+// Note state at t: display lines as spans, caret, status line.
+function noteView(ni, t) {
+  const n = T.notes[ni];
+  const first0 = str(replay(n.ev, t, false).lines[0]);
+  const kw = keywordOf(first0);
+  const r = replay(n.ev, t, kw === 'list');
+  const out = [];
+  let caretX = r.cc;
+  r.lines.forEach((ln, i) => {
+    const s = str(ln);
+    const spans = [];
+    if (i === 0) {
+      // keyword snap: the moment the keyword's last letter lands
+      const kwLen = kw ? kw.length : 0;
+      const snap = kw ? ln.ch[kwLen - 1].born : Infinity;
+      spans.push({ text: s, kind: kw ? 'kw' : 'main', snap });
+    } else if (s.trim().startsWith('//')) spans.push({ text: s, kind: 'light' });
+    else if (kw === 'list' && s.length) {
+      spans.push({ text: ln.checked ? '[x]' : '[ ]', kind: 'box', born: ln.ch[0].born, checkAt: ln.checkAt, checked: ln.checked });
+      spans.push({ text: ' ' + s, kind: ln.checked ? 'done' : 'main', checkAt: ln.checkAt });
+      if (i === r.cl) caretX = r.cc + 4;
+    } else {
+      const m = s.match(/^(.*?)(\s*=)$/);
+      if (kw === 'math' && m && RESULTS[m[1]]) {
+        // the app colors from " = " to the end of the line with typeSubtle
+        const born = ln.ch[ln.ch.length - 1].born;
+        spans.push({ text: m[1], kind: 'main' }, { text: m[2], kind: 'eq', born }, { text: ' ' + RESULTS[m[1]], kind: 'result', born });
+      } else spans.push({ text: s, kind: 'main' });
+    }
+    out.push(spans);
+  });
+  // status line, built like Editor.updateStatus
+  const body = r.lines.slice(1).map(str);
+  let st = null;
+  if (kw === 'math') { const v = body.filter((s) => /^[a-z ]+ : \d/.test(s)).length; st = v ? `${v} variable${v > 1 ? 's' : ''}` : 'math'; }
+  if (kw === 'list') { const items = r.lines.slice(1).filter((l) => str(l).length); st = `${items.filter((l) => l.checked).length}/${items.length} done`; }
+  const nums = body.flatMap((s) => (s.match(/\d+(\.\d+)?/g) || []).map(Number));
+  if (kw === 'sum') st = 'sum: ' + fmt(nums.reduce((a, b) => a + b, 0));
+  if (kw === 'avg') st = 'avg: ' + (nums.length ? fmt(nums.reduce((a, b) => a + b, 0) / nums.length) : '–');
+  if (kw === 'count') { const ls = body.filter((s) => s.trim()); st = `${ls.length} lines · ${ls.join(' ').split(/\s+/).filter(Boolean).length} words · ${body.join('').length} characters`; }
+  const tn = T.notes.find((x) => x.timerStart);
+  if (t >= tn.timerStart && ni === T.notes.indexOf(tn)) {
+    const left = tn.timerSecs - Math.floor(t - tn.timerStart);
+    st = `⏳ ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+  }
+  const title = kw && first0.includes(': ') ? first0.slice(first0.lastIndexOf(': ') + 2) : null;
+  const count = T.notes.filter((x) => x.from <= t).length;   // newest note is 1/N (Editor.newNote inserts at 0)
+  const status = [st, title ? `“${title}”` : null, `${count - ni}/${count}`].filter(Boolean).join('  ·  ');
+  return { lines: out, cl: r.cl, cc: caretX, last: r.last, status, rawStatus: st };
+}
+
+// ---------- drawing helpers ----------
+function rrect(x, y, w, h, r) { g.beginPath(); g.roundRect(x, y, w, h, Math.max(0, Math.min(r, w / 2, h / 2))); }
+const font = (px, bold, fam = MONO) => `${bold ? 700 : 400} ${px}px ${fam}`;
+const caretOn = (t, last) => t - last < 0.45 || ((t - last - 0.45) % 1) < 0.5;
+
+// Note content inside the window (window-local coords, 28px SF Mono, line height 34, baseline 120).
+function drawNoteContent(v, t, th, active, BA = 1) {
+  g.globalAlpha = BA;
+  const X = 38, Y0 = 120, LH = 34, A = 28 * ADV;
+  v.lines.forEach((spans, i) => {
+    let col = 0;
+    const y = Y0 + i * LH;
+    for (const s of spans) {
+      const x = X + col * A;
+      if (s.kind === 'kw') {
+        const p = clamp((t - s.snap) / 0.12);
+        if (p < 1) { g.globalAlpha = BA * (1 - p); g.font = font(28, false); g.fillStyle = th.fg; g.fillText(s.text, x, y); }
+        g.globalAlpha = BA * (p); g.font = font(28, true); g.fillStyle = th.accent; g.fillText(s.text, x, y); g.globalAlpha = BA * (1);
+      } else if (s.kind === 'box') {
+        // the marker arrives with its line; the x lands with a micro spring
+        const pin = ease(t - s.born, 'micro');
+        g.save(); g.translate(x + A * 1.5, y - 10); g.scale(0.6 + 0.4 * pin, 0.6 + 0.4 * pin); g.globalAlpha = BA * (clamp(pin * 1.5));
+        g.font = font(28, false); g.fillStyle = th.link; g.textAlign = 'center';
+        g.fillText('[', -A, 10); g.fillText(']', A, 10);
+        if (s.checked) { const q = ease(t - s.checkAt, 'micro'); g.save(); g.translate(0, 0); g.scale(q, q); g.fillText('x', 0, 10); g.restore(); }
+        g.setLineDash([3, 3]); g.strokeStyle = th.link; g.lineWidth = 1.5;
+        g.beginPath(); g.moveTo(-A * 1.5, 16); g.lineTo(A * 1.5, 16); g.stroke(); g.setLineDash([]);
+        g.restore(); g.globalAlpha = BA * (1);
+      } else if (s.kind === 'done') {
+        const p = ease(t - s.checkAt, 'panel');
+        g.font = font(28, false); g.fillStyle = mix(th.fg, th.light, p); g.fillText(s.text, x, y);
+        const w = (s.text.length - 1) * A;
+        g.fillStyle = mix(th.fg, th.light, p); g.fillRect(x + A, y - 9, w * p, 2);
+      } else if (s.kind === 'result') {
+        // result digits rise into place one after another
+        g.font = font(28, false); g.fillStyle = th.subtle;
+        [...s.text].forEach((ch, j) => {
+          const q = ease(t - s.born - 0.04 - j * 0.025, 'micro');
+          g.globalAlpha = BA * (clamp(q * 2)); g.fillText(ch, x + (j) * A, y + (1 - q) * 14);
+        });
+        g.globalAlpha = BA * (1);
+      } else if (s.kind === 'eq') {
+        g.font = font(28, false); g.fillStyle = mix(th.fg, th.subtle, ease(t - s.born - 0.04, 'micro')); g.fillText(s.text, x, y);
+      } else {
+        g.font = font(28, false); g.fillStyle = s.kind === 'light' ? th.light : th.fg; g.fillText(s.text, x, y);
+      }
+      col += s.text.length;
+    }
+  });
+  if (active && caretOn(t, v.last)) { g.globalAlpha = BA; g.fillStyle = th.fg; g.fillRect(X + v.cc * A, Y0 + v.cl * LH - 24, 2.5, 31); }
+}
+
+// Window chrome measured from the real screenshots (2x): radius 38, rim, lights r13 at y 32, scroll track.
+function drawWindow(th, t, rect, chrome, content) {
+  const { x, y, w, h, r, fill } = rect;
+  g.save();
+  g.shadowColor = th === THEMES.paper ? 'rgba(60,50,30,0.18)' : 'rgba(0,0,0,0.55)';
+  g.shadowBlur = 70; g.shadowOffsetY = 24;
+  rrect(x, y, w, h, r); g.fillStyle = fill || th.bg; g.fill();
+  g.restore();
+  if (chrome <= 0) return;
+  g.save(); rrect(x, y, w, h, r); g.clip();
+  g.translate(x, y); g.scale(w / WW, h / WH);
+  g.globalAlpha = chrome;
+  // rim: 1px highlight along the top edge, hairline elsewhere
+  g.strokeStyle = th.rim; g.lineWidth = 2; rrect(1, 1, WW - 2, WH - 2, 38); g.stroke();
+  g.fillStyle = mix(th.bg, th.fg, 0.05); rrect(732, 70, 22, WH - 117, 11); g.fill();
+  content();
+  g.globalAlpha = chrome;
+  [['#EC6765', 0], ['#F2CA44', 1], ['#65C466', 2]].forEach(([col, i]) => {
+    const p = clamp(ease(t - 2.5 - i * 0.07, 'micro') * 1.0);
+    g.fillStyle = col; g.beginPath(); g.arc(32 + i * 46, 32, 13 * p, 0, Math.PI * 2); g.fill();
+  });
+  g.restore();
+}
+
+function drawStatus(text, th) {
+  g.font = font(22, false, 'SFP'); g.fillStyle = th.light; g.fillText(text, 29, WH - 18);
+}
+
+// Header: the current word, typed in its own little editor; caret shows while it's being edited.
+function headerState(t) {
+  const r = replay(T.header, t, false);
+  return { text: str(r.lines[0]), last: r.last };
+}
+function headerGeom(t) {
+  // hook center -> column (2.0) -> wordmark (28.0); heavy spring, no overshoot
+  const hookW = 4 * ADV * L.hook;
+  const wordW = 8 * ADV * L.word.s;
+  const fx = L.word.center ? L.word.x - wordW / 2 : L.word.x;
+  const x = track(t, [[0, W / 2 - hookW / 2], [2.0, L.hx], [28.0, fx]], 120, 24);
+  const y = track(t, [[0, H / 2 + L.hook * 0.35], [2.0, L.hy], [28.0, L.word.y]], 120, 24);
+  const s = track(t, [[0, L.hook], [2.0, L.hs], [28.0, L.word.s]], 120, 24);
+  return { x, y, s };
+}
+
+function drawHeader(t, th) {
+  const { text, last } = headerState(t);
+  const { x, y, s } = headerGeom(t);
+  g.save(); g.translate(x, y); g.scale(s / 100, s / 100);
+  const snap = clamp((t - 1.0) / 0.12);
+  const col = t >= 27.9 ? th.fg : th.accent;
+  if (t < 1.0 + 0.12) {
+    // hook letters drop in on a micro spring, then the word snaps to bold accent on 1.0
+    [...text].forEach((ch, i) => {
+      const born = 0.25 + i * 0.25, q = ease(t - born, 'micro');
+      g.globalAlpha = clamp(q * 3) * (1 - snap); g.font = font(100, false); g.fillStyle = th.fg;
+      g.fillText(ch, i * 100 * ADV, (1 - q) * 18);
+    });
+  }
+  g.globalAlpha = snap; g.font = font(100, true); g.fillStyle = col; g.fillText(text, 0, 0); g.globalAlpha = 1;
+  // caret: in the hook it blinks; later it shows only while the header is being edited
+  const editing = t > 2.0 && t - last < 0.35;
+  const hookCaret = t < 2.0 && caretOn(t, Math.max(0, last));
+  if (editing || hookCaret) { g.fillStyle = th.fg; g.fillRect(text.length * 100 * ADV + 4, -76, 7, 96); }
+  g.restore();
+}
+
+// Subtitle: typed at 40 cps; leaves by being selected (accent 35%) then deleted.
+function drawSub(t, th, liveText) {
+  for (const sb of T.subs) {
+    if (t < sb.t || t >= sb.out + 0.12) continue;
+    const full = sb.live ? (liveText || '').replace(/ · /g, '\n') : sb.text;
+    const n = sb.live ? full.length : Math.floor((t - sb.t) * 40);
+    const txt = full.slice(0, n);
+    const lines = txt.split('\n');
+    const fs = L.ss, A = fs * ADV, lh = fs * 1.3;
+    const x0 = L.hx + 6, y0 = L.sy + fs;
+    const selected = t >= sb.out;
+    lines.forEach((ln, i) => {
+      if (selected) { g.fillStyle = th.accent; g.globalAlpha = 0.35; g.fillRect(x0, y0 + i * lh - fs * 0.82, ln.length * A, fs * 1.1); g.globalAlpha = 1; }
+      g.font = font(fs, false); g.fillStyle = sb.live ? th.fg : th.subtle; g.fillText(ln, x0, y0 + i * lh);
+    });
+    if (!selected && caretOn(t, sb.live ? t : sb.t + full.length / 40) && !sb.live) {
+      const ll = lines[lines.length - 1];
+      g.fillStyle = th.fg; g.fillRect(x0 + ll.length * A + 2, y0 + (lines.length - 1) * lh - fs * 0.8, 3, fs * 1.05);
+    }
+  }
+}
+
+// ⌥ A keycaps: rise in the column, press (window hides), glide into the empty spot and grow, press (window returns).
+function drawKeys(t, th) {
+  const { in: tin } = T.keycaps, [p1, p2] = T.keyPress;
+  if (t < tin || t > p2 + 0.6) return;
+  const m = ease(t - p1 - 0.12, 'panel');                     // column -> window spot
+  const S = lerp(L.keyS, L.keyBig, m), gap = S * 0.22;
+  const x0 = lerp(L.kx, L.wx - (2 * L.keyBig + L.keyBig * 0.22) / 2, m);
+  const y0 = lerp(L.keyY, L.wy - L.keyBig / 2, m);
+  const rise = ease(t - tin, 'micro');
+  const gone = ease(t - p2 - 0.1, 'micro');                   // sink behind the returning window
+  ['⌥', 'A'].forEach((k, i) => {
+    const kx = x0 + i * (S + gap), ky = y0 + (1 - rise) * 40 + gone * S * 0.3;
+    let d = 0; for (const p of T.keyPress) d += spring(t - p + 0.08 - i * 0.03, 320, 30) - spring(t - p - 0.04 - i * 0.03, 320, 30);
+    const depth = S * 0.09;
+    g.globalAlpha = clamp(rise * 1.5) * (1 - gone);
+    g.fillStyle = th.keyEdge; rrect(kx, ky + depth, S, S, S * 0.18); g.fill();
+    g.fillStyle = th.key; rrect(kx, ky + d * depth, S, S, S * 0.18); g.fill();
+    g.strokeStyle = th.keyEdge; g.lineWidth = 2; g.stroke();
+    g.font = font(S * 0.42, false); g.fillStyle = th.fg; g.textAlign = 'center';
+    g.fillText(k, kx + S / 2, ky + d * depth + S * 0.62); g.textAlign = 'left';
+    g.globalAlpha = 1;
+  });
+}
+
+// Which notes are on screen and where (two-finger swipe: tracked drag, spring commit).
+function noteLayers(t) {
+  let cur = 0;
+  T.swipes.forEach((s, i) => { if (t >= s.t1) cur = i + 1; });
+  for (let i = 0; i < T.swipes.length; i++) {
+    const s = T.swipes[i];
+    if (t >= s.t0 && t < s.t1 + 0.9) {
+      const drag = -150 * (t < s.t1 ? (1 - Math.cos(Math.PI * clamp((t - s.t0) / (s.t1 - s.t0)))) / 2 : 1);
+      const d = drag + (t >= s.t1 ? (-800 + 150) * spring(t - s.t1, 210, 28) : 0);
+      return [{ ni: i, dx: d, alpha: 1 - clamp(-d / 800) * 0.9, active: t < s.t1 },
+              { ni: i + 1, dx: d + 800, alpha: 1 - clamp((d + 800) / 800) * 0.9, active: t >= s.t1 }];
+    }
+  }
+  return [{ ni: cur, dx: 0, alpha: 1, active: true }];
+}
+
+// ---------- the frame ----------
+const icon = new Image(); icon.src = 'assets/icon.png';
+
+function windowRect(t) {
+  const ws = L.ws, full = { x: L.wx - WW * ws / 2, y: L.wy - WH * ws / 2, w: WW * ws, h: WH * ws, r: 38 * ws };
+  // caret -> window (2.0): the hook caret stretches into the window
+  const hg = headerGeom(1.99), k = hg.s / 100;
+  const caret = { x: hg.x + (4 * 100 * ADV + 4) * k, y: hg.y - 76 * k, w: 7 * k, h: 96 * k, r: 2 };
+  const p = ease(t - 2.0, 'panel');
+  let R = { x: lerp(caret.x, full.x, p), y: lerp(caret.y, full.y, p), w: lerp(caret.w, full.w, p), h: lerp(caret.h, full.h, p), r: lerp(caret.r, full.r, p) };
+  // ⌥A: hide on the first press, show on the second
+  const vis = clamp(track(t, [[0, 1], [T.keyPress[0], 0], [T.keyPress[1], 1]], 320, 30));
+  const sc = 0.94 + 0.06 * vis;
+  R = { x: R.x + R.w * (1 - sc) / 2, y: R.y + R.h * (1 - sc) / 2, w: R.w * sc, h: R.h * sc, r: R.r * sc, vis };
+  // window -> icon (28.0)
+  const m = ease(t - T.end.morph, 'panel');
+  if (m > 0) {
+    const I = L.icon, S = I.s * 0.9;     // icon.png squircle spans ~90% of the image
+    R = { x: lerp(R.x, I.x - S / 2, m), y: lerp(R.y, I.y - S / 2, m), w: lerp(R.w, S, m), h: lerp(R.h, S, m), r: lerp(R.r, S * 0.23, m), vis: 1 };
+  }
+  return { R, p };
+}
+
+function scene(t, th) {
+  g.fillStyle = th.bg; g.fillRect(0, 0, W, H);
+  g.textBaseline = 'alphabetic';
+  const layers = t >= 2.0 ? noteLayers(t) : [];
+  const activeLayer = layers.find((l) => l.active) || layers[0];
+  const views = layers.map((l) => ({ ...l, v: noteView(l.ni, t) }));
+  const av = views.find((l) => l.active);
+
+  drawHeader(t, th);
+  drawSub(t, th, av && av.v.rawStatus);
+  drawKeys(t, th);
+
+  if (t >= 2.0) {
+    const { R, p } = windowRect(t);
+    const m = clamp((t - T.end.morph) / 0.2);
+    const fill = t < 2.6 ? mix(th.fg, th.bg, p * 2.5) : t > T.end.morph ? mix(th.bg, '#141720', ease(t - T.end.morph, 'panel')) : th.bg;
+    const chrome = clamp((p - 0.55) * 3) * (1 - m) * R.vis;
+    g.globalAlpha = R.vis < 1 ? clamp(R.vis * 1.4) : 1;
+    drawWindow(th, t, { ...R, fill }, chrome, () => {
+      g.save(); rrect(0, 50, WW - 34, WH - 90, 0); g.clip();
+      for (const l of views) { g.save(); g.translate(l.dx, 0); drawNoteContent(l.v, t, th, l.active, chrome * l.alpha); g.restore(); }
+      g.restore();
+      g.globalAlpha = chrome * clamp((t - 2.6) / 0.2);
+      if (av) drawStatus(av.v.status, th);
+    });
+    g.globalAlpha = 1;
+    if (t >= T.end.morph) drawIcon(t, R);
+  }
+  if (t >= T.end.morph) drawEndLines(t, th);
+}
+
+// Icon assembly inside the morphing window: bars grow, ring draws, then the real icon.png takes over.
+function drawIcon(t, R) {
+  const S = R.w / 0.9, cx = R.x + R.w / 2, cy = R.y + R.h / 2, u = S / 256;
+  const real = clamp((t - T.end.real) / 0.25);
+  g.save();
+  g.globalAlpha = 1 - real;
+  [[100, 75], [128, 75], [156, 42]].forEach(([yy, bw], i) => {
+    const q = ease(t - T.end.morph - 0.25 - i * 0.07, 'micro');
+    g.fillStyle = '#E5E5EB'; rrect(cx + (90 - 128) * u, cy + (yy - 128 - 5) * u, bw * u * q, 10 * u, 5 * u); g.fill();
+  });
+  const a = ease(t - T.end.ring, 'panel');
+  g.strokeStyle = '#7D8CF7'; g.lineWidth = 20 * u; g.lineCap = 'round';
+  g.beginPath(); g.arc(cx, cy, 63 * u, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * a); g.stroke();
+  g.globalAlpha = real; g.drawImage(icon, cx - S / 2, cy - S / 2, S, S);
+  g.restore();
+}
+
+function drawEndLines(t, th) {
+  const P = L.lines, A = P.s * ADV;
+  T.endLines.forEach((ln, i) => {
+    const t0 = i ? T.end.line2 : T.end.line1;
+    const n = clamp(Math.floor((t - t0) * 40), 0, ln.length), txt = ln.slice(0, n);
+    if (!n && t < t0) return;
+    const x = P.center ? P.x - ln.length * A / 2 : P.x, y = P.y + i * P.s * 1.5;
+    g.font = font(P.s, false); g.fillStyle = i ? th.accent : th.subtle; g.fillText(txt, x, y);
+    const lastT = t0 + ln.length / 40;
+    if (i === 1 || t < T.end.line2) if ((i === 1 && t >= t0) || (i === 0 && t < T.end.line2)) {
+      if (caretOn(t, Math.min(t, lastT))) { g.fillStyle = th.fg; g.fillRect(x + n * A + 2, y - P.s * 0.8, 3, P.s * 1.05); }
+    }
+  });
+}
+
+// Theme wipes: a circle from the window's gear corner floods the whole frame with the next theme.
+function draw(t) {
+  let cur = 'knight', wipe = null;
+  for (const w of T.themes) {
+    if (t >= w.t) { const p = ease(t - w.t, 'panel'); if (p < 0.995) wipe = { from: cur, to: w.to, p, t0: w.t }; cur = w.to; }
+  }
+  if (!wipe) { scene(t, THEMES[cur]); return; }
+  scene(t, THEMES[wipe.from]);
+  const { R } = windowRect(wipe.t0);
+  const ox = R.x + R.w - 40, oy = R.y + 40, maxR = Math.hypot(Math.max(ox, W - ox), Math.max(oy, H - oy));
+  const rad = wipe.p * maxR;
+  g.save(); g.beginPath(); g.arc(ox, oy, rad, 0, Math.PI * 2); g.clip(); scene(t, THEMES[wipe.to]); g.restore();
+  g.strokeStyle = THEMES[wipe.to].accent; g.globalAlpha = 1 - wipe.p; g.lineWidth = 6;
+  g.beginPath(); g.arc(ox, oy, rad, 0, Math.PI * 2); g.stroke(); g.globalAlpha = 1;
+}
+
+window.seek = (t) => { draw(t); return true; };
+window.TIMELINE = T;
+// fonts and the icon must be loaded before frame 0
+window.READY = Promise.all([document.fonts.load('400 28px SFM'), document.fonts.load('700 28px SFM'), document.fonts.load('400 22px SFP'), icon.decode()])
+  .then(() => { const w = (g.font = font(100, false), g.measureText('MMMMMMMMMM').width / 1000); console.log('SFM advance/em', w); return w; });
+
+if (!navigator.webdriver) {
+  window.READY.then(() => { const t0 = performance.now(); (function loop() { draw(((performance.now() - t0) / 1000) % T.DUR); requestAnimationFrame(loop); })(); });
+}
+</script>
