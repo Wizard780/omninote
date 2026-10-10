@@ -1,0 +1,8 @@
+{
+  "name": "omninote-reel",
+  "private": true,
+  "description": "omninote launch reel rendered from code",
+  "devDependencies": {
+    "playwright": "^1.64.0"
+  }
+}
